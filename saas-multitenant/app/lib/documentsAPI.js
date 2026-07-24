@@ -1,4 +1,4 @@
-import { apiRequest } from './api.js';
+import { apiRequest, openDocument } from './api.js';
 
 // Listar todos os documentos
 export const getDocuments = async (filters = {}) => {
@@ -43,8 +43,20 @@ export const renameDocument = async (id, displayName) =>
     body: { display_name: displayName },
   })).data;
 
-// Deletar documento
+// Deletar documento (hard — mantido para compatibilidade; SISV usa soft-delete)
 export const deleteDocument = async (id) =>
   (await apiRequest(`/api/documents/${id}`, {
     method: 'DELETE',
   })).data;
+
+// Soft-delete (SISV): arquivar / restaurar / remover logicamente
+export const archiveDocument = async (id) =>
+  (await apiRequest(`/api/documents/${id}/archive`, { method: 'POST' })).data;
+export const restoreDocument = async (id) =>
+  (await apiRequest(`/api/documents/${id}/restore`, { method: 'POST' })).data;
+export const removeDocument = async (id) =>
+  (await apiRequest(`/api/documents/${id}/remove`, { method: 'POST' })).data;
+
+// Download/visualização controlados pelo backend
+export const viewDocument = (id) => openDocument(`/api/documents/${id}/download?inline=1`);
+export const downloadDocument = (id, filename) => openDocument(`/api/documents/${id}/download`, { download: true, filename });

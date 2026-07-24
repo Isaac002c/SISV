@@ -1,9 +1,32 @@
 const express = require('express');
+const fs = require('fs');
 const router = express.Router();
 const documentModel = require('../models/documentModels');
 const companyModel = require('../models/companyModels');
 const vehicleModel = require('../models/companyVehicleModels');
+const fileStorage = require('../services/fileStorage');
 const { requireAdmin } = require('../middlewares/checkPermission');
+
+// Valida que a categoria (quando enviada) pertence ao tenant.
+const pool = require('../config/db');
+async function categoryExists(tenantId, id) {
+  if (!id) return true;
+  const { rows } = await pool.query('SELECT 1 FROM document_categories WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+  return rows.length > 0;
+}
+
+// Stream controlado do arquivo (valida tenant + caminho; nunca expõe path interno).
+function streamDoc(res, tenantId, doc, disposition) {
+  const storedName = doc.stored_name || fileStorage.storedNameFromUrl(doc.file_url);
+  const resolved = fileStorage.resolvePath(tenantId, storedName);
+  if (!resolved.ok || !fs.existsSync(resolved.filePath)) {
+    return res.status(404).json({ success: false, error: 'Arquivo não encontrado.' });
+  }
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(doc.file_name || storedName)}"`);
+  if (doc.file_type) res.setHeader('Content-Type', doc.file_type);
+  return res.sendFile(resolved.filePath);
+}
 
 // Renomear documento — utilitários de validação (nome de exibição apenas).
 // Caracteres proibidos em nome de arquivo: \ / : * ? " < > |
@@ -60,7 +83,7 @@ router.get('/', async (req, res) => {
     res.json({ success: true, data: documents });
   } catch (err) {
     console.error('Erro ao buscar documentos:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
@@ -81,7 +104,7 @@ router.get('/stats', async (req, res) => {
     });
   } catch (err) {
     console.error('Erro ao buscar stats:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
@@ -95,7 +118,7 @@ router.get('/contract/:contractId', async (req, res) => {
     res.json({ success: true, data: documents });
   } catch (err) {
     console.error('Erro ao buscar documentos do contrato:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
@@ -109,8 +132,50 @@ router.get('/client/:clientId', async (req, res) => {
     res.json({ success: true, data: documents });
   } catch (err) {
     console.error('Erro ao buscar documentos do cliente:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
+});
+
+// GET /api/documents/:id/download - Download controlado (stream pelo backend)
+router.get('/:id/download', async (req, res) => {
+  try {
+    const doc = await documentModel.getDocumentByIdRaw(req.params.id, req.tenantId);
+    if (!doc) return res.status(404).json({ success: false, error: 'Documento não encontrado' });
+    return streamDoc(res, req.tenantId, doc, req.query.inline === '1' ? 'inline' : 'attachment');
+  } catch (err) {
+    console.error('Erro no download:', err.message);
+    res.status(500).json({ success: false, error: 'Erro ao baixar documento' });
+  }
+});
+
+// POST /api/documents/:id/archive - Arquivar (soft)
+router.post('/:id/archive', async (req, res) => {
+  try {
+    const doc = await documentModel.archiveDocument(req.params.id, req.tenantId);
+    if (!doc) return res.status(404).json({ success: false, error: 'Documento não encontrado' });
+    try { await documentModel.logDocumentEvent({ tenant_id: req.tenantId, user_id: req.userId, document_id: doc.id, action: 'archive', name: doc.file_name }); } catch (_) {}
+    res.json({ success: true, data: doc });
+  } catch (err) { res.status(500).json({ success: false, error: 'Erro interno do servidor.' }); }
+});
+
+// POST /api/documents/:id/restore - Restaurar
+router.post('/:id/restore', async (req, res) => {
+  try {
+    const doc = await documentModel.restoreDocument(req.params.id, req.tenantId);
+    if (!doc) return res.status(404).json({ success: false, error: 'Documento não encontrado' });
+    try { await documentModel.logDocumentEvent({ tenant_id: req.tenantId, user_id: req.userId, document_id: doc.id, action: 'restore', name: doc.file_name }); } catch (_) {}
+    res.json({ success: true, data: doc });
+  } catch (err) { res.status(500).json({ success: false, error: 'Erro interno do servidor.' }); }
+});
+
+// POST /api/documents/:id/remove - Remoção LÓGICA (soft-delete). Admin/gestor.
+router.post('/:id/remove', requireAdmin, async (req, res) => {
+  try {
+    const doc = await documentModel.softRemoveDocument(req.params.id, req.tenantId, req.userId);
+    if (!doc) return res.status(404).json({ success: false, error: 'Documento não encontrado' });
+    try { await documentModel.logDocumentEvent({ tenant_id: req.tenantId, user_id: req.userId, document_id: doc.id, action: 'remove', name: doc.file_name }); } catch (_) {}
+    res.json({ success: true, data: doc });
+  } catch (err) { res.status(500).json({ success: false, error: 'Erro interno do servidor.' }); }
 });
 
 // GET /api/documents/:id - Buscar documento por ID
@@ -128,7 +193,7 @@ router.get('/:id', async (req, res) => {
     res.json({ success: true, data: document });
   } catch (err) {
     console.error('Erro ao buscar documento:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
@@ -137,7 +202,7 @@ router.post('/', async (req, res) => {
   try {
     const {
       contract_id, client_id, company_id, vehicle_id, file_url, file_name,
-      file_type, file_size, category, description
+      file_type, file_size, category, description, category_id, stored_name, original_name
     } = req.body;
     const tenantId = req.tenantId;
     const userId = req.userId;
@@ -155,6 +220,9 @@ router.post('/', async (req, res) => {
       const own = await assertOwnership({ company_id, vehicle_id, tenantId });
       if (!own.ok) return res.status(own.status).json({ success: false, error: own.error });
     }
+    if (!(await categoryExists(tenantId, category_id))) {
+      return res.status(400).json({ success: false, error: 'Categoria de documento inválida.' });
+    }
 
     const document = await documentModel.createDocument({
       tenant_id: tenantId,
@@ -168,13 +236,17 @@ router.post('/', async (req, res) => {
       file_size,
       category: category || 'outros',
       description,
+      category_id,
+      stored_name,
+      original_name,
       uploaded_by: userId
     });
-    
+
+    try { await documentModel.logDocumentEvent({ tenant_id: tenantId, user_id: userId, document_id: document.id, action: 'upload', name: file_name }); } catch (_) { /* não bloqueia */ }
     res.status(201).json({ success: true, data: document });
   } catch (err) {
     console.error('Erro ao criar documento:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
@@ -203,7 +275,7 @@ router.put('/:id', async (req, res) => {
     res.json({ success: true, data: document });
   } catch (err) {
     console.error('Erro ao atualizar documento:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
@@ -276,7 +348,7 @@ router.patch('/:id/rename', async (req, res) => {
     return res.json({ success: true, data: updated });
   } catch (err) {
     console.error('Erro ao renomear documento:', err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
@@ -295,7 +367,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     res.json({ success: true, data: document, message: 'Documento deletado com sucesso' });
   } catch (err) {
     console.error('Erro ao deletar documento:', err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 

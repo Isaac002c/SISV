@@ -55,3 +55,33 @@ export const apiRequest = async (endpoint, options = {}) => {
   return JSON.parse(text);
 };
 
+// Baixa um arquivo autenticado (download controlado pelo backend) como blob URL.
+// Usado para visualizar/baixar documentos sem expor URL pública — envia o token
+// no header Authorization (um <a href> comum não conseguiria).
+export const apiBlobUrl = async (endpoint) => {
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    headers: { ...getAuthHeaders() },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = JSON.parse(await res.text()).error || msg; } catch { /* noop */ }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+};
+
+// Abre (nova aba) ou baixa um documento pelo endpoint controlado.
+export const openDocument = async (endpoint, { download = false, filename } = {}) => {
+  const url = await apiBlobUrl(endpoint);
+  if (download) {
+    const a = document.createElement('a');
+    a.href = url; a.download = filename || 'documento';
+    document.body.appendChild(a); a.click(); a.remove();
+  } else {
+    window.open(url, '_blank', 'noopener');
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+};
+

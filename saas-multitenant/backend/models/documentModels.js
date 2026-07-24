@@ -4,10 +4,11 @@ const pool = require('../config/db');
 // DOCUMENTS MODEL - Documentos
 // ============================================
 
-// CREATE - Criar novo documento
+// CREATE - Criar novo documento (com categoria/metadados; retrocompatível)
 const createDocument = async ({
   tenant_id, contract_id, client_id, company_id, vehicle_id, file_url, file_name,
-  file_type, file_size, category, description, uploaded_by
+  file_type, file_size, category, description, uploaded_by,
+  category_id, stored_name, original_name
 }) => {
   if (!tenant_id) {
     throw new Error('tenant_id é obrigatório para criar um documento');
@@ -16,25 +17,28 @@ const createDocument = async ({
   const result = await pool.query(
     `INSERT INTO documents(
       tenant_id, contract_id, client_id, company_id, vehicle_id, file_url, file_name,
-      file_type, file_size, category, description, uploaded_by
-    ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      file_type, file_size, category, description, uploaded_by,
+      category_id, stored_name, original_name, status
+    ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'ativo') RETURNING *`,
     [
       tenant_id, contract_id || null, client_id || null, company_id || null, vehicle_id || null,
-      file_url, file_name, file_type, file_size, category, description, uploaded_by
+      file_url, file_name, file_type, file_size, category, description, uploaded_by,
+      category_id || null, stored_name || null, original_name || null
     ]
   );
 
   return result.rows[0];
 };
 
-// READ - Listar todos os documentos do tenant
+// READ - Listar todos os documentos do tenant (exclui removidos logicamente).
+// O filtro é no-op para tenants que nunca usaram soft-delete (status='ativo').
 const getAllDocuments = async (tenant_id) => {
   const result = await pool.query(
     `SELECT d.*, c.numero_multa AS contract_number, cl.name as client_name
      FROM documents d
      LEFT JOIN contracts c ON d.contract_id = c.id
      LEFT JOIN clients cl ON d.client_id = cl.id
-     WHERE d.tenant_id = $1
+     WHERE d.tenant_id = $1 AND d.status <> 'removido'
      ORDER BY d.uploaded_at DESC`,
     [tenant_id]
   );
@@ -65,15 +69,47 @@ const getDocumentsByContract = async (contract_id, tenant_id) => {
   return result.rows;
 };
 
-// READ - Buscar documentos por cliente
-const getDocumentsByClient = async (client_id, tenant_id) => {
+// READ - Buscar documentos por cliente (exclui removidos; traz categoria e autor)
+const getDocumentsByClient = async (client_id, tenant_id, { includeRemoved = false } = {}) => {
+  const statusFilter = includeRemoved ? '' : ` AND d.status <> 'removido'`;
   const result = await pool.query(
-    `SELECT * FROM documents 
-     WHERE client_id = $1 AND tenant_id = $2
-     ORDER BY uploaded_at DESC`,
+    `SELECT d.*, dc.name as category_name, dc.color as category_color, u.name as uploaded_by_name
+     FROM documents d
+     LEFT JOIN document_categories dc ON d.category_id = dc.id AND dc.tenant_id = d.tenant_id
+     LEFT JOIN users u ON d.uploaded_by = u.id
+     WHERE d.client_id = $1 AND d.tenant_id = $2${statusFilter}
+     ORDER BY d.uploaded_at DESC`,
     [client_id, tenant_id]
   );
   return result.rows;
+};
+
+// UPDATE - Arquivar / restaurar / remoção lógica (soft-delete) — preservam histórico
+const archiveDocument = async (id, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE documents SET status='arquivado', archived_at=NOW() WHERE id=$1 AND tenant_id=$2 AND status<>'removido' RETURNING *`,
+    [id, tenant_id]);
+  return rows[0];
+};
+const restoreDocument = async (id, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE documents SET status='ativo', archived_at=NULL, removed_at=NULL, removed_by=NULL WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+    [id, tenant_id]);
+  return rows[0];
+};
+const softRemoveDocument = async (id, tenant_id, removed_by) => {
+  const { rows } = await pool.query(
+    `UPDATE documents SET status='removido', removed_at=NOW(), removed_by=$3 WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+    [id, tenant_id, removed_by || null]);
+  return rows[0];
+};
+const updateDocumentMeta = async (id, { file_name, category_id, description }, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE documents SET
+       file_name = COALESCE($1, file_name), category_id = $2, description = $3
+     WHERE id=$4 AND tenant_id=$5 RETURNING *`,
+    [file_name || null, category_id || null, description || null, id, tenant_id]);
+  return rows[0];
 };
 
 // READ - Buscar documentos por empresa (tenant-scoped)
@@ -180,6 +216,16 @@ const logDocumentRename = async ({ tenant_id, user_id, document_id, new_name, ol
   );
 };
 
+// AUDIT - Registra evento de documento (upload/arquivar/remover/restaurar) em
+// activity_logs. Não-bloqueante (chamado com try/catch nas rotas).
+const logDocumentEvent = async ({ tenant_id, user_id, document_id, action, name }) => {
+  await pool.query(
+    `INSERT INTO activity_logs (tenant_id, user_id, entity, entity_id, entity_name, action, details)
+     VALUES ($1, $2, 'document', $3, $4, $5, $6::jsonb)`,
+    [tenant_id, user_id || null, document_id, name || null, action, JSON.stringify({ name })]
+  );
+};
+
 // DELETE - Deletar documento
 const deleteDocument = async (id, tenant_id) => {
   const result = await pool.query(
@@ -204,6 +250,11 @@ module.exports = {
   getDocumentByIdRaw,
   renameDocument,
   logDocumentRename,
+  archiveDocument,
+  restoreDocument,
+  softRemoveDocument,
+  updateDocumentMeta,
+  logDocumentEvent,
   deleteDocument
 };
 
