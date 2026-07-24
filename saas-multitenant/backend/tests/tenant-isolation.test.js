@@ -46,6 +46,10 @@ before(async () => {
       defense_date DATE, stage TEXT DEFAULT 'cadastro', status TEXT DEFAULT 'pendente',
       value NUMERIC(15,2) DEFAULT 0, cost NUMERIC(15,2) DEFAULT 0, paid_value NUMERIC(15,2) DEFAULT 0,
       seller_id UUID, notes TEXT,
+      -- colunas adicionadas por sisv_01_tenant_config.sql
+      service_type_id INT, protocol_number TEXT,
+      department_id UUID, tenant_service_type_id UUID,
+      finalized_at TIMESTAMPTZ, reopened_at TIMESTAMPTZ, last_moved_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
