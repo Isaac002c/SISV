@@ -1,13 +1,15 @@
-.vercel
+# ============================================================
+# SISV — arquivos que NUNCA devem ser versionados.
+# Os templates .env.example (sem valores reais) SÃO versionados.
+# ============================================================
 
-# Variáveis de ambiente — NUNCA commitar
+# Variáveis de ambiente — NUNCA commitar valores reais
 .env
-.env.local
-.env.production
-.env.*.local
-.env.pooler
+.env.*
 backend/.env
 backend/.env.*
+# Exceções: templates com valores fictícios
+!.env.example
 !backend/.env.example
 
 # Dependências
@@ -16,11 +18,18 @@ backend/node_modules/
 
 # Build Next.js
 .next/
+out/
+
+# Uploads de usuários (dados — nunca versionar)
+backend/uploads/
 
 # Logs
 *.log
 npm-debug.log*
 logs/
 
+# Vercel (contém IDs do projeto)
 .vercel
-.env*
+
+# Cobertura de testes
+coverage/

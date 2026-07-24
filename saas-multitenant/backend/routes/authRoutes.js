@@ -21,6 +21,14 @@ const sendJson = (res, status, data) => {
   res.status(status).setHeader('Content-Type', 'application/json').json(data);
 };
 
+// JSONB modules → array | null. NULL/legado = todos os módulos habilitados.
+const parseModules = (raw) => {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw;
+  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : null; }
+  catch { return null; }
+};
+
 // ✅ Rate limit específico pro login
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -99,7 +107,8 @@ router.post('/login',
         `SELECT u.id, u.name, u.email, u.password_hash, u.tenant_id, u.role,
                 t.name as tenant_name, t.slug as tenant_slug, t.status as tenant_status,
                 t.logo_url as tenant_logo_url, t.brand_color as tenant_brand_color,
-                t.brand_color_dark as tenant_brand_color_dark, t.tagline as tenant_tagline
+                t.brand_color_dark as tenant_brand_color_dark, t.tagline as tenant_tagline,
+                t.developer as tenant_developer, t.modules as tenant_modules
          FROM users u
          JOIN tenants t ON u.tenant_id = t.id
          WHERE u.email = $1
@@ -176,7 +185,10 @@ router.post('/login',
           logo_url: user.tenant_logo_url || null,
           brand_color: user.tenant_brand_color || '#751518',
           brand_color_dark: user.tenant_brand_color_dark || '#050708',
-          tagline: user.tenant_tagline || 'Plataforma de Gestão'
+          tagline: user.tenant_tagline || 'Plataforma de Gestão',
+          developer: user.tenant_developer || null,
+          // NULL no banco = todos os módulos habilitados (tenants legados).
+          modules: parseModules(user.tenant_modules)
         }
       });
     } catch (err) {

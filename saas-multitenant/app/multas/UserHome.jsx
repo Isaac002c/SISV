@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { APP_BRAND, DEVELOPED_BY } from '../lib/brand';
 
 const quickActionsConsultor = [
   {
@@ -47,9 +48,9 @@ export default function UserHome({ user }) {
   const greeting  = isAdmin ? `Olá, ${firstName}!` : `Olá, Consultor ${firstName}!`;
   const actions   = quickActionsConsultor;
   // Nome do tenant (data-driven) — sem branding fixo de cliente.
-  let tenantName = 'Nexos';
+  let tenantName = APP_BRAND.name;
   if (typeof window !== 'undefined') {
-    try { tenantName = JSON.parse(localStorage.getItem('tenant') || '{}').name || 'Nexos'; } catch { /* noop */ }
+    try { tenantName = JSON.parse(localStorage.getItem('tenant') || '{}').name || APP_BRAND.name; } catch { /* noop */ }
   }
 
   return (
@@ -91,7 +92,7 @@ export default function UserHome({ user }) {
 
       {/* Footer */}
       <div className="user-home-footer">
-        <span>Nexos · um produto Chronostek</span>
+        <span>{DEVELOPED_BY}</span>
       </div>
     </div>
   );

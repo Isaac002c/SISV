@@ -14,8 +14,11 @@ const pageInfo = {
   pagamentos:   { title: 'Pagamentos',       subtitle: 'Todos os pagamentos registrados, parcelas e sinais.' },
   recibos:      { title: 'Recibos',          subtitle: 'Emissão, reemissão e histórico de recibos.' },
   config:       { title: 'Configurações Financeiras', subtitle: 'Identidade do recibo, numeração e formas de pagamento.' },
-  // Multas (legado)
-  dashboard:  { title: 'Dashboard',         subtitle: 'Visão geral de clientes, serviços, prazos e etapas.' },
+  // Operação (SISV / despachantes)
+  dashboard:     { title: 'Dashboard',       subtitle: 'Visão geral de clientes, serviços, prazos e etapas.' },
+  processos:     { title: 'Processos',       subtitle: 'Fila operacional dos processos de CNH.' },
+  configuracoes: { title: 'Configurações',   subtitle: 'Etapas, status, tipos de serviço e setores da operação.' },
+  users:         { title: 'Usuários',        subtitle: 'Gerencie usuários, cargos e permissões.' },
   clients:    { title: 'Clientes',           subtitle: 'Gerencie todos os clientes e seus processos.' },
   companies:  { title: 'Empresas',           subtitle: 'Pessoas jurídicas, frota e processos vinculados.' },
   leads:      { title: 'Leads',              subtitle: 'Lista e cadastro de leads captados.' },
@@ -79,6 +82,12 @@ export default function PageHeader({ currentTab, user, tenant, onLogout, onMobil
   const getRoleBadge = () => {
     if (role === 'admin') {
       return { label: 'ADMIN', color: '#2563eb', bg: 'rgba(37, 99, 235,0.08)', border: 'rgba(37, 99, 235,0.2)' };
+    }
+    if (role === 'manager') {
+      return { label: 'GESTOR', color: '#2563eb', bg: 'rgba(37, 99, 235,0.08)', border: 'rgba(37, 99, 235,0.2)' };
+    }
+    if (role === 'operator') {
+      return { label: 'OPERADOR', color: '#15803d', bg: 'rgba(21,128,61,0.08)', border: 'rgba(21,128,61,0.2)' };
     }
     return { label: 'CONSULTOR', color: '#475569', bg: 'rgba(71,85,105,0.08)', border: 'rgba(71,85,105,0.2)' };
   };

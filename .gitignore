@@ -14,10 +14,11 @@ build/
 .env.local
 .env.*
 !.env.example
-# Deploy: envs reais e dump de schema (nunca versionar)
-saas-multitenant/deploy/backend.env
+# Deploy: envs reais e dump de schema (nunca versionar).
+# Regra geral: qualquer *.env em deploy/ é segredo; só os *.example entram no git.
+saas-multitenant/deploy/*.env
+!saas-multitenant/deploy/*.env.example
 saas-multitenant/deploy/.env
-saas-multitenant/deploy/tunnel.env
 saas-multitenant/deploy/schema.sql
 
 # Vercel (arquivos gerados pela CLI/painel — contêm IDs do projeto)

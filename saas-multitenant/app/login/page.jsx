@@ -3,11 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiRequest } from '../lib/api.js';
+import { APP_BRAND, APP_INITIAL, DEVELOPED_BY } from '../lib/brand';
 
-// A tela de login é institucional Chronostek e não deve usar branding de tenant.
-// Logo, nome, cores e identidade visual são fixos da Chronostek. O tenant
-// (ex.: CR Recursos) só aparece DEPOIS do login, na área autenticada (sidebar/header).
-// Não puxar logo_url / brand_color / nome do tenant aqui.
+// Tela de login institucional do sistema (SISV, configurável por env). Não usa
+// branding específico de tenant — a identidade do tenant aparece DEPOIS do login
+// (sidebar/header). Cor/nome vêm de APP_BRAND (variáveis de tema configuráveis).
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -73,7 +73,7 @@ export default function Login() {
         width: '100%',
         maxWidth: '420px'
       }}>
-        {/* Marca Nexos */}
+        {/* Marca institucional (SISV) */}
         <div style={{ textAlign: 'center', marginBottom: '36px' }}>
           <div style={{
             display: 'inline-flex',
@@ -83,13 +83,13 @@ export default function Login() {
             height: '80px',
             marginBottom: '16px',
             borderRadius: '20px',
-            background: 'linear-gradient(135deg, #1d4ed8 0%, #16324f 100%)',
-            boxShadow: '0 0 24px rgba(29,78,216,0.45)',
+            background: `linear-gradient(135deg, ${APP_BRAND.color} 0%, ${APP_BRAND.colorDark} 100%)`,
+            boxShadow: `0 0 24px ${APP_BRAND.color}55`,
             fontSize: '38px',
             fontWeight: 800,
             color: '#fff',
           }}>
-            N
+            {APP_INITIAL}
           </div>
           <h1 style={{
             fontSize: '26px',
@@ -98,10 +98,10 @@ export default function Login() {
             marginBottom: '4px',
             letterSpacing: '-0.5px'
           }}>
-            Nexos
+            {APP_BRAND.name}
           </h1>
           <p style={{ color: '#64748b', fontSize: '13px' }}>
-            Um produto Chronostek
+            {APP_BRAND.tagline}
           </p>
         </div>
 
@@ -189,7 +189,7 @@ export default function Login() {
             style={{
               width: '100%',
               padding: '14px',
-              background: loading ? '#1e40af' : '#2563eb',
+              background: loading ? APP_BRAND.colorDark : APP_BRAND.color,
               color: 'white',
               border: 'none',
               borderRadius: '8px',
@@ -199,7 +199,7 @@ export default function Login() {
               fontWeight: '600',
               letterSpacing: '0.3px',
               transition: 'background 0.2s, transform 0.1s',
-              boxShadow: loading ? 'none' : '0 4px 16px rgba(37,99,235,0.4)'
+              boxShadow: loading ? 'none' : `0 4px 16px ${APP_BRAND.color}66`
             }}
           >
             {loading ? 'Entrando...' : 'Entrar'}
@@ -213,7 +213,7 @@ export default function Login() {
           fontSize: '11px',
           letterSpacing: '0.5px'
         }}>
-          © 2026 Chronostek. Todos os direitos reservados.
+          {DEVELOPED_BY}
         </p>
       </div>
     </div>

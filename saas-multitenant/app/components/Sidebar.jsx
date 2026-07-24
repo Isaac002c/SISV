@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
+import { APP_BRAND, DEVELOPED_BY, isModuleEnabled, getTenantModules } from '../lib/brand';
 
 const Icons = {
   Dashboard: () => (
@@ -162,20 +163,29 @@ const Icons = {
 // Navegação: DUAS áreas — Despachantes (operação/processos) e Financeiro.
 // Itens com roles[] = visíveis apenas para essas roles. Sem roles[] = todos.
 // =============================================================================
+// Cada item mapeia um `module` (chave de módulo do tenant). Itens sem `module`
+// aparecem sempre. Módulos desabilitados para o tenant somem do menu (e a API
+// também bloqueia). `modules == null` no tenant = tudo habilitado (legado).
 const sidebarConfig = {
   multas: {
-    label: 'Processos',
+    label: 'Operação',
     items: [
-      { key: 'dashboard',  label: 'Dashboard',  Icon: Icons.Dashboard,  tab: 'dashboard',  roles: ['admin'] },
-      { key: 'clients',    label: 'Clientes',   Icon: Icons.Clients,    tab: 'clients' },
-      { key: 'companies',  label: 'Empresas',   Icon: Icons.Building,   tab: 'companies' },
-      { key: 'deferidos',  label: 'Deferidos',  Icon: Icons.Award,      tab: 'deferidos' },
-      { key: 'leads',      label: 'Leads',      Icon: Icons.Target,     tab: 'leads' },
-      { key: 'tarefas',    label: 'Tarefas',    Icon: Icons.Tasks,      tab: 'tarefas' },
-      { key: 'calendario', label: 'Prazos',     Icon: Icons.Calendar,   tab: 'calendario' },
-      { key: 'eventos',    label: 'Agenda',     Icon: Icons.CalEvent,   tab: 'eventos' },
-      { key: 'history',    label: 'Histórico',  Icon: Icons.Clock,      tab: 'history',    roles: ['admin'] },
-      { key: 'approvals',  label: 'Aprovações', Icon: Icons.Approvals,  tab: 'approvals',  roles: ['admin'] },
+      // `explicit: true` = item novo do SISV; só aparece se o tenant listar o
+      // módulo explicitamente (modules=null/legado NÃO mostra, preservando os
+      // demais tenants). Itens sem `explicit` seguem a regra legada (null = tudo).
+      { key: 'dashboard',     label: 'Dashboard',    Icon: Icons.Dashboard, tab: 'dashboard',     module: 'dashboard', roles: ['admin'] },
+      { key: 'processos',     label: 'Processos',    Icon: Icons.Layers,    tab: 'processos',     module: 'processos', explicit: true },
+      { key: 'clients',       label: 'Clientes',     Icon: Icons.Clients,   tab: 'clients',       module: 'clientes' },
+      { key: 'companies',     label: 'Empresas',     Icon: Icons.Building,  tab: 'companies',     module: 'empresas' },
+      { key: 'deferidos',     label: 'Deferidos',    Icon: Icons.Award,     tab: 'deferidos',     module: 'deferidos' },
+      { key: 'leads',         label: 'Leads',        Icon: Icons.Target,    tab: 'leads',         module: 'leads' },
+      { key: 'tarefas',       label: 'Tarefas',      Icon: Icons.Tasks,     tab: 'tarefas',       module: 'tarefas' },
+      { key: 'calendario',    label: 'Prazos',       Icon: Icons.Calendar,  tab: 'calendario',    module: 'agenda' },
+      { key: 'eventos',       label: 'Agenda',       Icon: Icons.CalEvent,  tab: 'eventos',       module: 'agenda' },
+      { key: 'history',       label: 'Histórico',    Icon: Icons.Clock,     tab: 'history',       module: 'historico', roles: ['admin'] },
+      { key: 'users',         label: 'Usuários',     Icon: Icons.Clients,   tab: 'users',         module: 'usuarios', explicit: true, roles: ['admin'] },
+      { key: 'configuracoes', label: 'Configurações', Icon: Icons.Settings, tab: 'configuracoes', module: 'config', explicit: true, roles: ['admin'] },
+      { key: 'approvals',     label: 'Aprovações',   Icon: Icons.Approvals, tab: 'approvals',     module: 'aprovacoes', roles: ['admin'] },
     ],
   },
   financeiro: {
@@ -193,15 +203,15 @@ const sidebarConfig = {
 };
 
 const modules = [
-  { key: 'multas', label: 'Processos' },
-  { key: 'financeiro', label: 'Financeiro', roles: ['admin'] },
+  { key: 'multas', label: 'Operação' },
+  { key: 'financeiro', label: 'Financeiro', module: 'financeiro', roles: ['admin'] },
 ];
 
 // Sem branding fixo de clientes: a identidade vem dos dados do tenant (logo_url,
-// brand_color, tagline). Quando ausente, usa o padrão Nexos.
+// brand_color, tagline). Quando ausente, usa o padrão institucional (SISV).
 const TENANT_DEFAULTS = {};
-const NEXOS_BRAND = '#16324f';
-const NEXOS_TAGLINE = 'Plataforma de Gestão';
+const NEXOS_BRAND = APP_BRAND.color;
+const NEXOS_TAGLINE = APP_BRAND.tagline;
 
 function deriveSlug(name) {
   return (name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '-');
@@ -287,16 +297,34 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
   const config   = sidebarConfig[moduleKey];
   const userRole = user?.role || 'seller';
   const tenantSlug = tenant?.slug || deriveSlug(tenant?.name) || 'default';
+  const tenantModules = getTenantModules(tenant); // null = todos habilitados
+  const restricted = Array.isArray(tenantModules); // tenant com módulos explícitos (ex.: SISV)
 
-  // Filtra itens visíveis para a role atual
+  // Item habilitado? Itens `explicit` exigem o módulo listado no tenant; os demais
+  // seguem a regra legada (modules=null libera).
+  const itemEnabled = (item) => {
+    if (!item.module) return true;
+    if (item.explicit) return restricted && tenantModules.includes(item.module);
+    return isModuleEnabled(tenantModules, item.module);
+  };
+
+  // Filtra itens visíveis: por role E por módulo habilitado do tenant.
   const visibleItems = config.items.filter(item => {
-    if (item.roles && !item.roles.includes(userRole)) return false;
+    if (item.roles && !item.roles.includes(userRole)) {
+      // Em tenants restritos (SISV), o Dashboard operacional é liberado a todos.
+      if (!(restricted && item.key === 'dashboard')) return false;
+    }
+    if (!itemEnabled(item)) return false;
     // CR Recursos: consultor (não-admin) não vê "Prazos" (tab calendario). Só este tenant.
     if (tenantSlug === 'cr-recursos' && userRole !== 'admin' && item.tab === 'calendario') return false;
     return true;
   });
 
-  const visibleModules = modules.filter(m => !m.roles || m.roles.includes(userRole));
+  const visibleModules = modules.filter(m => {
+    if (m.roles && !m.roles.includes(userRole)) return false;
+    if (m.module && !isModuleEnabled(tenantModules, m.module)) return false;
+    return true;
+  });
 
   const classes = [
     'sidebar',
@@ -347,15 +375,21 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
         })}
       </nav>
 
-      <div className="sidebar-divider" />
-      <button
-        className={`sidebar-item sidebar-item-settings${currentModule === 'settings' ? ' active' : ''}`}
-        onClick={() => onNavigate('settings', 'general')}
-        title={collapsed ? 'Configurações' : undefined}
-      >
-        <span className="sidebar-item-icon"><Icons.Settings /></span>
-        {!collapsed && <span className="sidebar-item-label">Configurações</span>}
-      </button>
+      {/* Ajustes gerais (assinatura/atividades). Oculto em tenants restritos
+          (ex.: SISV), cuja configuração operacional fica no menu principal. */}
+      {!restricted && (
+        <>
+          <div className="sidebar-divider" />
+          <button
+            className={`sidebar-item sidebar-item-settings${currentModule === 'settings' ? ' active' : ''}`}
+            onClick={() => onNavigate('settings', 'general')}
+            title={collapsed ? 'Configurações' : undefined}
+          >
+            <span className="sidebar-item-icon"><Icons.Settings /></span>
+            {!collapsed && <span className="sidebar-item-label">Configurações</span>}
+          </button>
+        </>
+      )}
 
       <div className="sidebar-footer">
         {!collapsed && (
@@ -363,9 +397,12 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
             <span className="sidebar-footer-label">
               <Icons.Mail /> Suporte
             </span>
-            <a href="mailto:suporte@nexos.app" className="sidebar-footer-email">
-              suporte@nexos.app
+            <a href={`mailto:${APP_BRAND.supportEmail}`} className="sidebar-footer-email">
+              {APP_BRAND.supportEmail}
             </a>
+            <span className="sidebar-footer-label" style={{ marginTop: 8, opacity: 0.7, fontSize: 11 }}>
+              {DEVELOPED_BY}
+            </span>
           </div>
         )}
         <button

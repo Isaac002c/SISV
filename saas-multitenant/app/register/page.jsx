@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiRequest } from '../lib/api.js';
+import { APP_BRAND } from '../lib/brand';
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -79,10 +80,10 @@ export default function Register() {
           <h1 style={{ 
             fontSize: '28px', 
             fontWeight: 'bold', 
-            color: '#3b82f6',
+            color: APP_BRAND.color,
             marginBottom: '8px'
           }}>
-            Nexos
+            {APP_BRAND.name}
           </h1>
           <p style={{ color: '#94a3b8', fontSize: '14px' }}>
             Criação de contas temporariamente desativada
