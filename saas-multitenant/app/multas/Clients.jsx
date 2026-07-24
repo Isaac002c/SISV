@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getClients, createClient, updateClient, deleteClient, searchClients } from '../lib/clientsAPI';
+import { getTenantModules } from '../lib/brand';
+import { getConfig } from '../lib/tenantConfigAPI';
+import ClienteDetalhe from '../sisv/ClienteDetalhe';
 
 const toInputDate = (value) => (!value ? '' : value.substring(0, 10));
 
@@ -89,7 +92,27 @@ export default function MultasClients() {
   const [formError, setFormError]     = useState(null);
   const searchDebounce                = useRef(null);
 
+  // SISV: abre o detalhe do cliente num drawer próprio (com processos vinculados),
+  // em vez da tela legada de despachantes. Detecta tenant restrito pelos módulos.
+  const [detailClient, setDetailClient] = useState(null);
+  const [sisvConfig, setSisvConfig]     = useState(null);
+  const [restricted, setRestricted]     = useState(false);
+
   useEffect(() => { loadClients(); }, []);
+
+  useEffect(() => {
+    let tenant = null;
+    try { tenant = JSON.parse(localStorage.getItem('tenant') || '{}'); } catch { tenant = null; }
+    const modules = getTenantModules(tenant);
+    const isRestricted = Array.isArray(modules) && modules.includes('processos');
+    setRestricted(isRestricted);
+    if (isRestricted) getConfig().then(setSisvConfig).catch(() => {});
+  }, []);
+
+  const openClient = (client) => {
+    if (restricted) setDetailClient(client);
+    else router.push(`/multas/clients/${client.id}`);
+  };
 
   const loadClients = async () => {
     try {
@@ -164,8 +187,8 @@ export default function MultasClients() {
     setFormError(null);
   };
 
-  const openEdit = (e, client) => {
-    e.stopPropagation();
+  const startEdit = (client) => {
+    setDetailClient(null);
     setEditingClient(client);
     setFormData({
       name:       client.name       || '',
@@ -180,6 +203,11 @@ export default function MultasClients() {
       status:     client.status     || 'negociacao',
     });
     setShowModal(true);
+  };
+
+  const openEdit = (e, client) => {
+    e.stopPropagation();
+    startEdit(client);
   };
 
   const openNew = () => {
@@ -312,7 +340,7 @@ export default function MultasClients() {
             ) : displayed.map((client) => (
               <tr
                 key={client.id}
-                onClick={() => router.push(`/multas/clients/${client.id}`)}
+                onClick={() => openClient(client)}
                 className="clickable-row"
               >
                 <td>
@@ -497,6 +525,16 @@ export default function MultasClients() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* SISV: detalhe do cliente (dados, processos vinculados, documentos) */}
+      {detailClient && (
+        <ClienteDetalhe
+          client={detailClient}
+          config={sisvConfig}
+          onClose={() => setDetailClient(null)}
+          onEdit={startEdit}
+        />
       )}
     </div>
   );

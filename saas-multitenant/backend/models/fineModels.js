@@ -4,36 +4,41 @@ const pool = require('../config/db');
 // FINES MODEL - Multas V2
 // ============================================
 
-// CREATE - Criar nova multa
-const createFine = async ({ 
+// CREATE - Criar novo processo (fines é a entidade "processo")
+// `organ` é opcional: obrigatório apenas na operação de multas (validado na rota
+// /api/fines). Em processos de CNH (SISV) não se aplica. Campos novos
+// (department_id, tenant_service_type_id) são opcionais e retrocompatíveis.
+const createFine = async ({
   tenant_id, client_id, fine_number, plate, organ, infraction_type,
   vehicle_model, infraction_date, due_date, defense_date, stage, status,
-  value, cost, paid_value, seller_id, notes
+  value, cost, paid_value, seller_id, notes,
+  department_id, tenant_service_type_id, service_type_id, protocol_number
 }) => {
   if (!tenant_id) {
-    throw new Error('tenant_id é obrigatório para criar uma multa');
+    throw new Error('tenant_id é obrigatório para criar um processo');
   }
   if (!client_id) {
-    throw new Error('client_id é obrigatório para criar uma multa');
+    throw new Error('client_id é obrigatório para criar um processo');
   }
-  if (!organ) {
-    throw new Error('órgão é obrigatório para criar uma multa');
-  }
-  
+
   const result = await pool.query(
     `INSERT INTO fines(
       tenant_id, client_id, fine_number, plate, organ, infraction_type,
       vehicle_model, infraction_date, due_date, defense_date, stage, status,
-      value, cost, paid_value, seller_id, notes
-    ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+      value, cost, paid_value, seller_id, notes,
+      department_id, tenant_service_type_id, service_type_id, protocol_number, last_moved_at
+    ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+             $18, $19, $20, $21, NOW()) RETURNING *`,
     [
-      tenant_id, client_id, fine_number, plate, organ, infraction_type,
-      vehicle_model, infraction_date, due_date, defense_date, 
+      tenant_id, client_id, fine_number, plate, organ || null, infraction_type,
+      vehicle_model, infraction_date, due_date, defense_date,
       stage || 'cadastro', status || 'pendente',
-      value || 0, cost || 0, paid_value || 0, seller_id, notes
+      value || 0, cost || 0, paid_value || 0, seller_id, notes,
+      department_id || null, tenant_service_type_id || null, service_type_id || null,
+      protocol_number || null
     ]
   );
-  
+
   return result.rows[0];
 };
 
@@ -442,6 +447,356 @@ const updateFineStage = async (id, stage, tenant_id) => {
   return result.rows[0];
 };
 
+// ============================================
+// PROCESSOS (SISV) — operação sobre a mesma tabela `fines`.
+// Consultas ricas com filtros combináveis, paginação e agregados operacionais.
+// Toda query é escopada por tenant_id.
+// ============================================
+
+// READ - Detalhe do processo com rótulos de setor/tipo de serviço/responsável.
+const getProcessById = async (id, tenant_id) => {
+  const result = await pool.query(
+    `SELECT f.*,
+            c.name as client_name, c.cpf as client_cpf, c.phone as client_phone,
+            c.email as client_email, c.cnh as client_cnh, c.address as client_address,
+            u.name as seller_name,
+            d.name as department_name, d.color as department_color,
+            st.label as service_type_label, st.code as service_type_code
+     FROM fines f
+     LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
+     LEFT JOIN users u ON f.seller_id = u.id
+     LEFT JOIN departments d ON f.department_id = d.id AND d.tenant_id = f.tenant_id
+     LEFT JOIN tenant_service_types st ON f.tenant_service_type_id = st.id AND st.tenant_id = f.tenant_id
+     WHERE f.id = $1 AND f.tenant_id = $2`,
+    [id, tenant_id]
+  );
+  return result.rows[0];
+};
+
+// Monta o WHERE compartilhado por listProcesses e countProcesses.
+const buildProcessWhere = (tenant_id, filters = {}) => {
+  const clauses = ['f.tenant_id = $1'];
+  const params = [tenant_id];
+  let i = 2;
+  const add = (sql, val) => { clauses.push(sql.replace('$$', `$${i}`)); params.push(val); i++; };
+
+  if (filters.stage)                 add('f.stage = $$', filters.stage);
+  if (filters.status)                add('f.status = $$', filters.status);
+  if (filters.department_id === 'none') clauses.push('f.department_id IS NULL');
+  else if (filters.department_id)     add('f.department_id = $$', filters.department_id);
+  if (filters.tenant_service_type_id) add('f.tenant_service_type_id = $$', filters.tenant_service_type_id);
+  if (filters.client_id)             add('f.client_id = $$', filters.client_id);
+
+  if (filters.seller_id === 'none')  clauses.push('f.seller_id IS NULL');
+  else if (filters.seller_id)        add('f.seller_id = $$', filters.seller_id);
+
+  if (filters.finalized === true || filters.finalized === 'true')   clauses.push('f.finalized_at IS NOT NULL');
+  if (filters.finalized === false || filters.finalized === 'false') clauses.push('f.finalized_at IS NULL');
+
+  // Pendência: usa o flag is_pending do catálogo de status (JOIN em listProcesses).
+  if (filters.pending === true || filters.pending === 'true') {
+    clauses.push('ps.is_pending = TRUE');
+  }
+
+  // Sem movimentação há N dias (usa last_moved_at, com fallback para updated_at).
+  // Cutoff calculado em JS para portabilidade (evita cast dinâmico de intervalo).
+  if (filters.stale_days) {
+    const cutoff = new Date(Date.now() - Number(filters.stale_days) * 86400000).toISOString();
+    add('COALESCE(f.last_moved_at, f.updated_at) < $$', cutoff);
+  }
+
+  // Prazos (due_date): vencidos e vencendo em N dias — só processos em aberto.
+  const todayISO = new Date().toISOString().slice(0, 10);
+  if (filters.overdue === true || filters.overdue === 'true') {
+    clauses.push('f.finalized_at IS NULL AND f.due_date IS NOT NULL');
+    add('f.due_date < $$', todayISO);
+  }
+  if (filters.due_soon === true || filters.due_soon === 'true') {
+    const soonISO = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    clauses.push('f.finalized_at IS NULL AND f.due_date IS NOT NULL');
+    add('f.due_date >= $$', todayISO);
+    add('f.due_date <= $$', soonISO);
+  }
+  if (filters.due_from) add('f.due_date >= $$', filters.due_from);
+  if (filters.due_to)   add('f.due_date <= $$', filters.due_to);
+  if (filters.date_from) add('f.created_at >= $$', filters.date_from);
+  if (filters.date_to)   add('f.created_at <= $$', filters.date_to);
+
+  // Busca textual combinável: cliente, CPF/CNPJ, número, protocolo, placa.
+  if (filters.q) {
+    clauses.push(`(
+      c.name ILIKE $${i} OR c.cpf ILIKE $${i} OR c.cnh ILIKE $${i}
+      OR f.fine_number ILIKE $${i} OR f.protocol_number ILIKE $${i} OR f.plate ILIKE $${i}
+    )`);
+    params.push(`%${filters.q}%`);
+    i++;
+  }
+
+  return { where: clauses.join(' AND '), params, nextIndex: i };
+};
+
+const SORT_COLUMNS = {
+  created_at: 'f.created_at',
+  updated_at: 'f.updated_at',
+  last_moved_at: 'COALESCE(f.last_moved_at, f.updated_at)',
+  client_name: 'c.name',
+  stage: 'f.stage',
+  status: 'f.status',
+  due_date: 'f.due_date',
+};
+
+// READ - Lista paginada de processos com filtros combináveis.
+const listProcesses = async (tenant_id, filters = {}) => {
+  const { where, params, nextIndex } = buildProcessWhere(tenant_id, filters);
+  const sortCol = SORT_COLUMNS[filters.sort_by] || 'COALESCE(f.last_moved_at, f.updated_at)';
+  const sortDir = String(filters.sort_dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const limit = Math.min(Math.max(parseInt(filters.limit, 10) || 25, 1), 200);
+  const offset = Math.max(parseInt(filters.offset, 10) || 0, 0);
+
+  // JOINs em derived tables/catálogos (portável; sem subqueries correlacionadas).
+  const joins = `
+    LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
+    LEFT JOIN users u ON f.seller_id = u.id
+    LEFT JOIN departments d ON f.department_id = d.id AND d.tenant_id = f.tenant_id
+    LEFT JOIN tenant_service_types st ON f.tenant_service_type_id = st.id AND st.tenant_id = f.tenant_id
+    LEFT JOIN process_statuses ps ON ps.tenant_id = f.tenant_id AND ps.code = f.status
+    LEFT JOIN (SELECT fine_id, COUNT(*) AS c FROM fine_documents GROUP BY fine_id) dc ON dc.fine_id = f.id`;
+
+  const rowsQuery = `
+    SELECT f.id, f.client_id, f.fine_number, f.protocol_number, f.plate, f.stage, f.status,
+           f.seller_id, f.department_id, f.tenant_service_type_id,
+           f.created_at, f.updated_at, f.last_moved_at, f.finalized_at, f.due_date, f.notes,
+           c.name as client_name, c.cpf as client_cpf, c.phone as client_phone,
+           u.name as seller_name,
+           d.name as department_name, d.color as department_color,
+           st.label as service_type_label,
+           COALESCE(dc.c, 0) AS document_count
+    FROM fines f${joins}
+    WHERE ${where}
+    ORDER BY ${sortCol} ${sortDir}
+    LIMIT $${nextIndex} OFFSET $${nextIndex + 1}`;
+
+  const countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM fines f
+    LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
+    LEFT JOIN process_statuses ps ON ps.tenant_id = f.tenant_id AND ps.code = f.status
+    WHERE ${where}`;
+
+  const [rowsRes, countRes] = await Promise.all([
+    pool.query(rowsQuery, [...params, limit, offset]),
+    pool.query(countQuery, params),
+  ]);
+
+  return { rows: rowsRes.rows, total: countRes.rows[0].total, limit, offset };
+};
+
+// UPDATE - Movimenta etapa marcando a última movimentação.
+const moveProcessStage = async (id, stage, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE fines SET stage = $1, last_moved_at = NOW(), updated_at = NOW()
+     WHERE id = $2 AND tenant_id = $3 RETURNING *`,
+    [stage, id, tenant_id]
+  );
+  return rows[0];
+};
+
+// UPDATE - Muda status marcando a última movimentação.
+const moveProcessStatus = async (id, status, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE fines SET status = $1, last_moved_at = NOW(), updated_at = NOW()
+     WHERE id = $2 AND tenant_id = $3 RETURNING *`,
+    [status, id, tenant_id]
+  );
+  return rows[0];
+};
+
+// UPDATE - Redistribui para outro responsável.
+const changeProcessSeller = async (id, seller_id, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE fines SET seller_id = $1, last_moved_at = NOW(), updated_at = NOW()
+     WHERE id = $2 AND tenant_id = $3 RETURNING *`,
+    [seller_id || null, id, tenant_id]
+  );
+  return rows[0];
+};
+
+// UPDATE - Troca de setor/departamento.
+const changeProcessDepartment = async (id, department_id, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE fines SET department_id = $1, last_moved_at = NOW(), updated_at = NOW()
+     WHERE id = $2 AND tenant_id = $3 RETURNING *`,
+    [department_id || null, id, tenant_id]
+  );
+  return rows[0];
+};
+
+// UPDATE - Finaliza o processo (registra finalized_at; opcionalmente muda etapa/status).
+const finalizeProcess = async (id, { stage, status }, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE fines SET
+       finalized_at = NOW(), reopened_at = NULL,
+       stage = COALESCE($1, stage), status = COALESCE($2, status),
+       last_moved_at = NOW(), updated_at = NOW()
+     WHERE id = $3 AND tenant_id = $4 RETURNING *`,
+    [stage || null, status || null, id, tenant_id]
+  );
+  return rows[0];
+};
+
+// UPDATE - Reabre um processo finalizado.
+const reopenProcess = async (id, { stage, status }, tenant_id) => {
+  const { rows } = await pool.query(
+    `UPDATE fines SET
+       finalized_at = NULL, reopened_at = NOW(),
+       stage = COALESCE($1, stage), status = COALESCE($2, status),
+       last_moved_at = NOW(), updated_at = NOW()
+     WHERE id = $3 AND tenant_id = $4 RETURNING *`,
+    [stage || null, status || null, id, tenant_id]
+  );
+  return rows[0];
+};
+
+// READ - Dashboard operacional do SISV (agregados por catálogo do tenant).
+const getProcessDashboard = async (tenant_id) => {
+  // Cutoffs calculados em JS (portável Postgres/pg-mem).
+  const staleCutoff = new Date(Date.now() - 7 * 86400000).toISOString();
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const soonISO = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const [totals, byStage, byStatus, bySeller, byDepartment, recent] = await Promise.all([
+    pool.query(
+      `SELECT
+        COUNT(*)::int AS total,
+        COUNT(CASE WHEN f.finalized_at IS NOT NULL THEN 1 END)::int AS finalized,
+        COUNT(CASE WHEN f.finalized_at IS NULL THEN 1 END)::int AS in_progress,
+        COUNT(CASE WHEN f.seller_id IS NULL AND f.finalized_at IS NULL THEN 1 END)::int AS unassigned,
+        COUNT(CASE WHEN COALESCE(f.last_moved_at, f.updated_at) < $2
+                    AND f.finalized_at IS NULL THEN 1 END)::int AS stale,
+        COUNT(CASE WHEN f.finalized_at IS NULL AND ps.is_pending = TRUE THEN 1 END)::int AS pending,
+        COUNT(CASE WHEN f.finalized_at IS NULL AND f.due_date IS NOT NULL
+                    AND f.due_date < $3 THEN 1 END)::int AS overdue,
+        COUNT(CASE WHEN f.finalized_at IS NULL AND f.due_date IS NOT NULL
+                    AND f.due_date >= $3 AND f.due_date <= $4 THEN 1 END)::int AS due_soon
+       FROM fines f
+       LEFT JOIN process_statuses ps ON ps.tenant_id = f.tenant_id AND ps.code = f.status
+       WHERE f.tenant_id = $1`,
+      [tenant_id, staleCutoff, todayISO, soonISO]
+    ),
+    pool.query(
+      `SELECT COALESCE(s.label, f.stage) AS label, f.stage AS code, s.color,
+              COUNT(*)::int AS count
+       FROM fines f
+       LEFT JOIN process_stages s ON s.tenant_id = f.tenant_id AND s.code = f.stage
+       WHERE f.tenant_id = $1 GROUP BY f.stage, s.label, s.color, s.sort_order
+       ORDER BY MIN(COALESCE(s.sort_order, 9999)), count DESC`,
+      [tenant_id]
+    ),
+    pool.query(
+      `SELECT COALESCE(s.label, f.status) AS label, f.status AS code, s.color,
+              COUNT(*)::int AS count
+       FROM fines f
+       LEFT JOIN process_statuses s ON s.tenant_id = f.tenant_id AND s.code = f.status
+       WHERE f.tenant_id = $1 GROUP BY f.status, s.label, s.color, s.sort_order
+       ORDER BY MIN(COALESCE(s.sort_order, 9999)), count DESC`,
+      [tenant_id]
+    ),
+    pool.query(
+      `SELECT u.name AS seller_name, f.seller_id, COUNT(*)::int AS count
+       FROM fines f LEFT JOIN users u ON f.seller_id = u.id
+       WHERE f.tenant_id = $1 AND f.finalized_at IS NULL
+       GROUP BY f.seller_id, u.name ORDER BY count DESC`,
+      [tenant_id]
+    ),
+    pool.query(
+      `SELECT d.name AS department_name, f.department_id, d.color, COUNT(*)::int AS count
+       FROM fines f LEFT JOIN departments d ON f.department_id = d.id AND d.tenant_id = f.tenant_id
+       WHERE f.tenant_id = $1 AND f.finalized_at IS NULL
+       GROUP BY f.department_id, d.name, d.color ORDER BY count DESC`,
+      [tenant_id]
+    ),
+    pool.query(
+      `SELECT f.id, f.fine_number, f.stage, f.status, f.last_moved_at, f.updated_at,
+              c.name AS client_name, u.name AS seller_name
+       FROM fines f
+       LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
+       LEFT JOIN users u ON f.seller_id = u.id
+       WHERE f.tenant_id = $1
+       ORDER BY COALESCE(f.last_moved_at, f.updated_at) DESC LIMIT 8`,
+      [tenant_id]
+    ),
+  ]);
+
+  return {
+    totals: totals.rows[0],
+    byStage: byStage.rows,
+    byStatus: byStatus.rows,
+    bySeller: bySeller.rows,
+    byDepartment: byDepartment.rows,
+    recent: recent.rows,
+  };
+};
+
+// UPDATE - Distribuição em LOTE (transacional): aplica responsável e/ou setor a
+// vários processos do tenant. Semântica clara: valida os alvos ANTES; processos
+// que não são do tenant entram em `skipped` (isolamento); tudo dentro de uma
+// transação (all-or-nothing em caso de erro no meio). Retorna dados para o
+// histórico (nomes anteriores) sem gravar o log aqui.
+const batchAssign = async (tenant_id, ids, { changeSeller, seller_id, changeDept, department_id }) => {
+  if (!Array.isArray(ids) || ids.length === 0) return { ok: false, error: 'Nenhum processo selecionado.' };
+  if (ids.length > 200) return { ok: false, error: 'Limite de 200 processos por lote.' };
+  if (!changeSeller && !changeDept) return { ok: false, error: 'Informe responsável e/ou setor.' };
+
+  const client = await pool.connect();
+  try {
+    // Validação de alvos (pertencem ao tenant). Fora da transação de escrita.
+    let newSellerName = null, newDeptName = null;
+    if (changeSeller && seller_id) {
+      const r = await client.query('SELECT name FROM users WHERE id = $1 AND tenant_id = $2', [seller_id, tenant_id]);
+      if (!r.rows[0]) return { ok: false, error: 'Responsável inválido.' };
+      newSellerName = r.rows[0].name;
+    }
+    if (changeDept && department_id) {
+      const r = await client.query('SELECT name FROM departments WHERE id = $1 AND tenant_id = $2', [department_id, tenant_id]);
+      if (!r.rows[0]) return { ok: false, error: 'Setor inválido.' };
+      newDeptName = r.rows[0].name;
+    }
+
+    await client.query('BEGIN');
+    const changes = [];
+    const skipped = [];
+    let updated = 0;
+    for (const id of ids) {
+      const cur = await client.query(
+        `SELECT f.id, f.seller_id, f.department_id, u.name AS seller_name, d.name AS department_name
+         FROM fines f
+         LEFT JOIN users u ON f.seller_id = u.id
+         LEFT JOIN departments d ON f.department_id = d.id AND d.tenant_id = f.tenant_id
+         WHERE f.id = $1 AND f.tenant_id = $2`, [id, tenant_id]);
+      const row = cur.rows[0];
+      if (!row) { skipped.push(id); continue; } // isolamento: id de outro tenant / inexistente
+      const rec = { fine_id: id };
+      let touched = false;
+      if (changeSeller && (row.seller_id || null) !== (seller_id || null)) {
+        await client.query('UPDATE fines SET seller_id = $1, last_moved_at = NOW(), updated_at = NOW() WHERE id = $2 AND tenant_id = $3', [seller_id || null, id, tenant_id]);
+        rec.seller = { old: row.seller_name, new: newSellerName }; touched = true;
+      }
+      if (changeDept && (row.department_id || null) !== (department_id || null)) {
+        await client.query('UPDATE fines SET department_id = $1, last_moved_at = NOW(), updated_at = NOW() WHERE id = $2 AND tenant_id = $3', [department_id || null, id, tenant_id]);
+        rec.department = { old: row.department_name, new: newDeptName }; touched = true;
+      }
+      if (touched) changes.push(rec);
+      updated++;
+    }
+    await client.query('COMMIT');
+    return { ok: true, updated, skipped, changes };
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch { /* noop */ }
+    throw e;
+  } finally {
+    client.release();
+  }
+};
+
 // DELETE - Deletar multa
 const deleteFine = async (id, tenant_id) => {
   const result = await pool.query(
@@ -472,6 +827,17 @@ module.exports = {
   updateFine,
   updateFineStatus,
   updateFineStage,
-  deleteFine
+  deleteFine,
+  // SISV — processos
+  getProcessById,
+  listProcesses,
+  moveProcessStage,
+  moveProcessStatus,
+  changeProcessSeller,
+  changeProcessDepartment,
+  finalizeProcess,
+  reopenProcess,
+  getProcessDashboard,
+  batchAssign
 };
 

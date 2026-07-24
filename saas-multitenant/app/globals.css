@@ -1045,6 +1045,22 @@ select {
   transform: none;
 }
 
+/* Tema SISV (Sinal Verde): cor primária da marca (verde). Sobrescreve a variável
+   --nx-primary no escopo do shell, cobrindo botões (que usam !important) e demais
+   elementos primários de forma consistente. */
+.sisv-theme {
+  --nx-primary: #16a34a;
+  --nx-primary-hover: #15803d;
+}
+.sisv-theme .btn-primary {
+  background: linear-gradient(135deg, #16a34a, #15803d) !important;
+  border-color: #15803d !important;
+}
+.sisv-theme .btn-primary:hover {
+  background: linear-gradient(135deg, #15803d, #052e16) !important;
+  border-color: #052e16 !important;
+}
+
 .btn-secondary {
   background: #f1f5f9;
   color: #475569;
@@ -4605,7 +4621,38 @@ html, body {
   background: #fff;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
-  overflow: hidden;
+  overflow-x: auto; /* tabelas largas rolam dentro do container (nunca estouram a página) */
+}
+
+/* ── Filtros da fila: selects viram painel recolhível no mobile ──────────────── */
+.proc-filter-selects { display: flex; gap: 8px; flex-wrap: wrap; }
+.proc-filters-toggle { display: none; }
+@media (max-width: 768px) {
+  .proc-filters-toggle { display: inline-flex; align-items: center; gap: 6px; }
+  .proc-filter-selects { display: none; width: 100%; flex-direction: column; }
+  .proc-filter-selects.open { display: flex; }
+  .proc-filter-selects .clients-filter-select { width: 100%; }
+}
+
+/* ── Fila de processos: vira CARDS no mobile (evita tabela horizontal gigante) ──
+   Aplica só à tabela .sisv-proc-table; as demais tabelas seguem com scroll-x. */
+@media (max-width: 768px) {
+  .sisv-proc-table thead { display: none; }
+  .sisv-proc-table, .sisv-proc-table tbody, .sisv-proc-table tr, .sisv-proc-table td { display: block; width: 100%; }
+  .sisv-proc-table tr {
+    border: 1px solid #e2e8f0; border-radius: 10px; margin: 0 0 10px; padding: 4px 2px; background: #fff;
+  }
+  .sisv-proc-table td {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    border: none; padding: 7px 12px; text-align: right;
+  }
+  .sisv-proc-table td::before {
+    content: attr(data-label); font-weight: 600; color: #94a3b8; font-size: 12px; text-align: left; flex-shrink: 0;
+  }
+  .sisv-proc-table td.proc-select { justify-content: flex-start; }
+  .sisv-proc-table td.proc-select::before { content: ''; }
+  .sisv-proc-table td.proc-cliente { flex-direction: column; align-items: flex-start; text-align: left; }
+  .sisv-proc-table td.proc-cliente::before { content: ''; }
 }
 
 /* Status badges de cliente */

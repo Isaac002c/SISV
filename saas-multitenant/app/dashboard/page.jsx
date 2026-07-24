@@ -26,6 +26,14 @@ import MultasLeadsList from '../multas/LeadsList';
 import MultasTarefas   from '../multas/Tarefas';
 import MultasApprovals from '../multas/Approvals';
 import MultasAgenda    from '../multas/Calendario';
+import MultasUsers     from '../multas/Users';
+
+// SISV — processos de CNH (operação Sinal Verde)
+import Processos       from '../sisv/Processos';
+import ProcessosConfig from '../sisv/ProcessosConfig';
+import DashboardSISV   from '../sisv/DashboardSISV';
+import HistoricoSISV   from '../sisv/HistoricoSISV';
+import { APP_BRAND, getTenantModules, isModuleEnabled } from '../lib/brand';
 
 // Financeiro
 import dynamic from 'next/dynamic';
@@ -63,20 +71,41 @@ const ComingSoon = ({ moduleName }) => (
   </div>
 );
 
+// Dashboard sensível ao tenant: SISV (e tenants com módulo 'processos') usam o
+// painel operacional de CNH; os demais mantêm o dashboard legado de despachantes.
+function isSisvTenant() {
+  try {
+    const modules = getTenantModules(JSON.parse(localStorage.getItem('tenant') || '{}'));
+    return Array.isArray(modules) && modules.includes('processos');
+  } catch { return false; }
+}
+
+function DashboardRouter() {
+  return isSisvTenant() ? <DashboardSISV /> : <MultasDashboard />;
+}
+
+// Histórico: SISV mostra as movimentações dos processos; legado mantém o seu.
+function HistoryRouter() {
+  return isSisvTenant() ? <HistoricoSISV /> : <MultasHistory />;
+}
+
 const modulePages = {
-  // ── Despachantes (operação: processos, clientes, agenda, leads) ────────
+  // ── Operação (processos, clientes, agenda, leads) ──────────────────────
   multas: {
     pages: {
-      dashboard:  MultasDashboard,
-      clients:    MultasClients,
-      companies:  MultasCompanies,
-      leads:      MultasLeadsList,
-      tarefas:    MultasTarefas,
-      approvals:  MultasApprovals,
-      history:    MultasHistory,
-      calendario: MultasAgenda,
-      eventos:    CalendarioEventos,
-      deferidos:  MultasDeferidos,
+      dashboard:     DashboardRouter,
+      processos:     Processos,
+      configuracoes: ProcessosConfig,
+      users:         MultasUsers,
+      clients:       MultasClients,
+      companies:     MultasCompanies,
+      leads:         MultasLeadsList,
+      tarefas:       MultasTarefas,
+      approvals:     MultasApprovals,
+      history:       HistoryRouter,
+      calendario:    MultasAgenda,
+      eventos:       CalendarioEventos,
+      deferidos:     MultasDeferidos,
       // legacy / coming-soon
       defesa:     () => <ComingSoon moduleName="Defesa Prévia" />,
       instancia1: () => <ComingSoon moduleName="1ª Instância" />,
@@ -187,6 +216,37 @@ function DashboardContent() {
     }
   }, [user, tenant, activeTab, router]);
 
+  // Gating de módulo por ROTA (spec §16): módulo desabilitado para o tenant não é
+  // acessível nem por URL direta. Redireciona para uma aba permitida.
+  useEffect(() => {
+    if (!user || !tenant) return;
+    const modules = getTenantModules(tenant);
+    if (modules == null) return; // legado: tudo liberado
+    const TAB_MODULE = {
+      dashboard: 'dashboard', processos: 'processos', configuracoes: 'config', users: 'usuarios',
+      clients: 'clientes', companies: 'empresas', deferidos: 'deferidos', leads: 'leads',
+      tarefas: 'tarefas', calendario: 'agenda', eventos: 'agenda', history: 'historico', approvals: 'aprovacoes',
+    };
+    let allowed = true;
+    if (currentModule === 'financeiro') allowed = isModuleEnabled(modules, 'financeiro');
+    else if (currentModule === 'settings') allowed = false; // ajustes gerais ocultos p/ tenants restritos
+    else if (currentModule === 'leads') allowed = isModuleEnabled(modules, 'leads');
+    else if (currentModule === 'multas') {
+      const mod = TAB_MODULE[activeTab];
+      allowed = mod ? isModuleEnabled(modules, mod) : true;
+      // Abas administrativas: bloqueadas por rota para não-admin (complementa o
+      // enforcement do backend, que já rejeita as escritas).
+      const ADMIN_ONLY = ['configuracoes', 'users', 'history'];
+      if (allowed && ADMIN_ONLY.includes(activeTab) && user.role !== 'admin' && user.role !== 'manager') {
+        allowed = false;
+      }
+    }
+    if (!allowed) {
+      const home = isModuleEnabled(modules, 'processos') ? 'processos' : 'dashboard';
+      router.replace(`/dashboard?module=multas&tab=${home}`);
+    }
+  }, [user, tenant, currentModule, activeTab, router]);
+
   const handleLogout = async () => {
     try {
       await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
@@ -209,13 +269,18 @@ function DashboardContent() {
     return (
       <div className="loading-screen">
         <div className="loading-spinner" />
-        <p>Carregando Nexos...</p>
+        <p>Carregando {APP_BRAND.name}...</p>
       </div>
     );
   }
 
+  const sisvTheme = (() => {
+    const m = getTenantModules(tenant);
+    return Array.isArray(m) && m.includes('processos');
+  })();
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sisvTheme ? ' sisv-theme' : ''}`}>
       {/* Mobile overlay */}
       {mobileSidebarOpen && (
         <div

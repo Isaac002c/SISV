@@ -166,6 +166,63 @@ const logDocumentAdded = async (tenant_id, fine_id, document_name, user_id) => {
   });
 };
 
+// Documento removido/inativado
+const logDocumentRemoved = async (tenant_id, fine_id, document_name, user_id) => {
+  return logFineChange({
+    tenant_id, fine_id, action: 'document_removed', field_name: 'document',
+    old_value: document_name, new_value: null, user_id
+  });
+};
+
+// Troca de responsável (redistribuição). Recebe nomes legíveis para o histórico.
+const logSellerChange = async (tenant_id, fine_id, old_name, new_name, user_id) => {
+  return logFineChange({
+    tenant_id, fine_id, action: 'seller_changed', field_name: 'responsavel',
+    old_value: old_name || 'Sem responsável', new_value: new_name || 'Sem responsável', user_id
+  });
+};
+
+// Troca de setor/departamento.
+const logDepartmentChange = async (tenant_id, fine_id, old_name, new_name, user_id) => {
+  return logFineChange({
+    tenant_id, fine_id, action: 'department_changed', field_name: 'setor',
+    old_value: old_name || 'Sem setor', new_value: new_name || 'Sem setor', user_id
+  });
+};
+
+// Criação do processo.
+const logProcessCreated = async (tenant_id, fine_id, label, user_id) => {
+  return logFineChange({
+    tenant_id, fine_id, action: 'created', field_name: 'processo',
+    old_value: null, new_value: label || 'Processo criado', user_id
+  });
+};
+
+// Observação incluída.
+const logNoteAdded = async (tenant_id, fine_id, note, user_id) => {
+  const snippet = String(note || '').slice(0, 240);
+  return logFineChange({
+    tenant_id, fine_id, action: 'note_added', field_name: 'observacao',
+    old_value: null, new_value: snippet, user_id
+  });
+};
+
+// Finalização.
+const logFinalized = async (tenant_id, fine_id, user_id, context = null) => {
+  return logFineChange({
+    tenant_id, fine_id, action: 'finalized', field_name: 'processo',
+    old_value: null, new_value: context || 'Processo finalizado', user_id
+  });
+};
+
+// Reabertura.
+const logReopened = async (tenant_id, fine_id, user_id, context = null) => {
+  return logFineChange({
+    tenant_id, fine_id, action: 'reopened', field_name: 'processo',
+    old_value: null, new_value: context || 'Processo reaberto', user_id
+  });
+};
+
 module.exports = {
   createFineLog,
   getLogsByFine,
@@ -177,6 +234,13 @@ module.exports = {
   logFineChange,
   logStatusChange,
   logStageChange,
-  logDocumentAdded
+  logDocumentAdded,
+  logDocumentRemoved,
+  logSellerChange,
+  logDepartmentChange,
+  logProcessCreated,
+  logNoteAdded,
+  logFinalized,
+  logReopened
 };
 
