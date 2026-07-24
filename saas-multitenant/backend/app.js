@@ -1,9 +1,15 @@
 require('dns').setDefaultResultOrder('ipv4first');
 require('dotenv').config({ path: __dirname + '/.env' });
 
+// Valida a configuração ANTES de carregar módulos que dependem dela (config/db).
+// Em produção, encerra com mensagem clara se faltar algo essencial ou houver
+// fallback inseguro (segredo padrão, CORS aberto, modo demo).
+require('./config/env').assertEnvOrExit();
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -34,6 +40,10 @@ const companyRoutes       = require('./routes/companyRoutes');
 const calendarEventRoutes = require('./routes/calendarEventRoutes');
 const masterRoutes        = require('./routes/masterRoutes');
 const financialRoutes     = require('./routes/financialRoutes');
+const tenantConfigRoutes  = require('./routes/tenantConfigRoutes');
+const processRoutes       = require('./routes/processRoutes');
+const tenantRoutes        = require('./routes/tenantRoutes');
+const { requireModule }   = require('./middlewares/requireModule');
 
 const app = express();
 
@@ -139,7 +149,8 @@ app.use((req, res, next) => {
 app.use('/auth', authRoutes);
 
 // Serve arquivos de upload estaticamente (sem autenticação — URL contém tenantId no path)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(UPLOADS_DIR, {
   dotfiles: 'deny',
   setHeaders: (res) => {
     res.set('Cache-Control', 'private, max-age=86400');
@@ -149,41 +160,44 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 
 app.use('/api', tenantContext);
 
-app.use('/api/leads', leadsRoutes);
-app.use('/api/targets', targetsRoutes);
-app.use('/api/sellers', sellersRoutes);
-app.use('/api/forecast', forecastRoutes);
-app.use('/api/assets', assetRoutes);
-app.use('/api/webhooks', webhookRoutes);
+// ── Identidade e configuração do tenant (SISV) ───────────────────────────────
+app.use('/api/tenant', tenantRoutes);
+app.use('/api/config', tenantConfigRoutes);
+
+// ── Núcleo operacional (habilitado para todos; SISV usa) ─────────────────────
 app.use('/api/clients', clientRoutes);
-app.use('/api/contracts', contractRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api', saasRoutes);
 app.use('/api/fines', finesRoutes);
+app.use('/api/processes', requireModule('processos'), processRoutes);
 app.use('/api/users/management', userManagementRoutes);
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/multas-leads', multasLeadsRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/fine-protocols', fineProtocolRoutes);
-app.use('/api/approvals', approvalRoutes);
-app.use('/api/companies', companyRoutes);
-app.use('/api/calendar-events', calendarEventRoutes);
+app.use('/api/assets', assetRoutes);
+app.use('/api/webhooks', webhookRoutes);
 app.use('/api/master', masterRoutes);
-app.use('/api/financial', financialRoutes);
+
+// ── Módulos com gate por tenant (fora do escopo do SISV → bloqueados) ────────
+// modules == NULL libera tudo (tenants legados). Ver middlewares/requireModule.
+app.use('/api/leads', requireModule('leads'), leadsRoutes);
+app.use('/api/multas-leads', requireModule('leads'), multasLeadsRoutes);
+app.use('/api/companies', requireModule('empresas'), companyRoutes);
+app.use('/api/calendar-events', requireModule('agenda'), calendarEventRoutes);
+app.use('/api/approvals', requireModule('aprovacoes'), approvalRoutes);
+app.use('/api/financial', requireModule('financeiro'), financialRoutes);
+app.use('/api/targets', requireModule('comercial'), targetsRoutes);
+app.use('/api/sellers', requireModule('comercial'), sellersRoutes);
+app.use('/api/forecast', requireModule('comercial'), forecastRoutes);
+app.use('/api/contracts', requireModule('comercial'), contractRoutes);
 
 // ============================================
-// HEALTH CHECK (sem autenticação — para uptime monitors)
+// HEALTH / READY (sem autenticação — para uptime monitors e orquestradores)
+// Não expõem secrets, URL do banco, versões ou estrutura interna.
 // ============================================
 
-app.get('/health', async (req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({ status: 'ok', db: 'connected', uptime: process.uptime() });
-  } catch {
-    res.status(503).json({ status: 'error', db: 'disconnected' });
-  }
-});
+app.use(require('./routes/healthRoutes')(pool));
 
 // ============================================
 // 404
