@@ -1,0 +1,138 @@
+# =============================================================================
+# SISV — CI de qualidade. NÃO faz deploy.
+# Falha quando: teste falhar, lint tiver erro, build falhar, migration inválida,
+# secret encontrado ou .env real versionado.
+# Não usa secrets do repositório (nada sensível é necessário para validar).
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: saas-multitenant
+
+jobs:
+  backend:
+    name: Backend — testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: saas-multitenant/backend/package-lock.json
+      - name: Instalar dependências (limpo)
+        working-directory: saas-multitenant/backend
+        run: npm ci
+      - name: Testes (node --test)
+        working-directory: saas-multitenant/backend
+        run: npm test
+
+  frontend:
+    name: Frontend — lint e build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: saas-multitenant/package-lock.json
+      - name: Instalar dependências (limpo)
+        run: npm ci
+      - name: Lint (falha em erro; warnings são tolerados)
+        run: npx next lint --max-warnings=-1
+      - name: Build de produção
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+  migrations:
+    name: Migrations — aplicar em PostgreSQL limpo
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sisv
+          POSTGRES_PASSWORD: sisv_ci_password
+          POSTGRES_DB: sisv_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U sisv -d sisv_ci"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar cliente psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Aplicar migrations na ordem
+        working-directory: saas-multitenant/backend
+        env:
+          PGPASSWORD: sisv_ci_password
+          DB: postgresql://sisv:sisv_ci_password@localhost:5432/sisv_ci
+        run: |
+          set -e
+          psql "$DB" -v ON_ERROR_STOP=1 -f migrations/000_nexos_schema.sql
+          psql "$DB" -v ON_ERROR_STOP=1 -f migrations/sisv_01_tenant_config.sql
+          psql "$DB" -v ON_ERROR_STOP=1 -f migrations/sisv_02_documents.sql
+      - name: Reaplicar (prova de idempotência)
+        working-directory: saas-multitenant/backend
+        env:
+          PGPASSWORD: sisv_ci_password
+          DB: postgresql://sisv:sisv_ci_password@localhost:5432/sisv_ci
+        run: |
+          set -e
+          psql "$DB" -v ON_ERROR_STOP=1 -f migrations/sisv_01_tenant_config.sql
+          psql "$DB" -v ON_ERROR_STOP=1 -f migrations/sisv_02_documents.sql
+      - name: Conferir objetos criados
+        working-directory: saas-multitenant/backend
+        env:
+          PGPASSWORD: sisv_ci_password
+          DB: postgresql://sisv:sisv_ci_password@localhost:5432/sisv_ci
+        run: |
+          set -e
+          for t in document_categories process_stages process_statuses tenant_service_types departments service_type_documents; do
+            psql "$DB" -v ON_ERROR_STOP=1 -c "SELECT 1 FROM $t LIMIT 1;" >/dev/null && echo "ok: $t"
+          done
+
+  security:
+    name: Segurança — secrets e arquivos proibidos
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nenhum .env real versionado
+        run: |
+          set -e
+          BAD=$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.example$' || true)
+          if [ -n "$BAD" ]; then echo "::error::Arquivo .env versionado:"; echo "$BAD"; exit 1; fi
+          echo "ok: nenhum .env real versionado"
+      - name: Nenhum upload, dump, log ou chave versionado
+        run: |
+          set -e
+          BAD=$(git ls-files | grep -E 'backend/uploads/|\.dump$|\.sql\.gz$|\.tar\.gz$|\.log$|\.pem$|\.key$|id_rsa' || true)
+          if [ -n "$BAD" ]; then echo "::error::Arquivo proibido versionado:"; echo "$BAD"; exit 1; fi
+          echo "ok: nenhum arquivo proibido"
+      - name: Nenhum segredo com valor literal
+        run: |
+          set -e
+          FILES=$(git ls-files | grep -vE 'package-lock.json$|\.env\.example$|tests/|\.github/workflows/')
+          # Segredo atribuído a literal longo (ignora process.env e placeholders)
+          HITS=$(echo "$FILES" | xargs grep -nE "(JWT_SECRET|API_KEY|PRIVATE_KEY|SECRET_KEY)[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9+/=_-]{16,}" 2>/dev/null | grep -v 'process\.env' || true)
+          if [ -n "$HITS" ]; then echo "::error::Possível segredo hardcoded:"; echo "$HITS"; exit 1; fi
+          # Tokens JWT/Bearer literais
+          TOK=$(echo "$FILES" | xargs grep -nE "eyJ[A-Za-z0-9._-]{30,}|Bearer [A-Za-z0-9._-]{30,}" 2>/dev/null || true)
+          if [ -n "$TOK" ]; then echo "::error::Token literal encontrado:"; echo "$TOK"; exit 1; fi
+          echo "ok: nenhum segredo literal"
