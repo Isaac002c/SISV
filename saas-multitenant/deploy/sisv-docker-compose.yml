@@ -11,7 +11,14 @@
 #   docker compose -f deploy/sisv-docker-compose.yml up -d frontend
 # Proxy/SSL (quando houver domínio) — profile "proxy":
 #   docker compose -f deploy/sisv-docker-compose.yml --profile proxy up -d nginx
+#
+# CRÍTICO: o `name: sisv` abaixo fixa o NOME DO PROJETO. Sem ele, o Compose usa o
+# nome da pasta ("deploy"), que colide com outras stacks cujo compose também fica
+# em uma pasta "deploy" (ex.: o Nexos em /opt/nexos/deploy) — e o `up` acabaria
+# recriando/substituindo os containers do outro sistema. Nunca remova esta linha.
 # =============================================================================
+
+name: sisv
 
 services:
 
