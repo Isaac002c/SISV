@@ -3,10 +3,9 @@
 //
 // Regra do produto:
 //   * Usa o branding do tenant quando configurado (settings financeiras ou tenants).
-//   * Cai para o padrão NEXO ("Nexo Despachantes CRM" / "by ChronosTek") quando
-//     o tenant não possui identidade própria.
+//   * Cai para o padrão SISV / TELUN quando o tenant não possui identidade própria.
 //   * NUNCA fixa branding de cliente nos componentes — tudo vem de dados.
-//   * A assinatura "by ChronosTek" só aparece no fallback padrão, para não
+//   * A assinatura TELUN só aparece no fallback padrão, para não
 //     substituir a marca de um tenant existente (ex.: CR Recursos).
 // =============================================================================
 

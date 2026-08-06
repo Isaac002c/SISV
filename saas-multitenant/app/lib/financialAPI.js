@@ -1,7 +1,7 @@
 import { apiRequest } from './api.js';
 
 // ============================================
-// FINANCIAL API — módulo financeiro (Nexos)
+// FINANCIAL API — módulo financeiro (SISV)
 // Todas as chamadas passam pelo proxy /api → backend (tenant via token).
 // ============================================
 

@@ -206,7 +206,7 @@ CREATE INDEX IF NOT EXISTS idx_receipts_created ON receipts(tenant_id, created_a
 CREATE TABLE IF NOT EXISTS tenant_financial_settings (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id                UUID NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
-  receipt_prefix           VARCHAR(20) NOT NULL DEFAULT 'NEXO',
+  receipt_prefix           VARCHAR(20) NOT NULL DEFAULT 'SISV',
   last_receipt_number      INTEGER NOT NULL DEFAULT 0 CHECK (last_receipt_number >= 0),
   razao_social             VARCHAR(255),
   document                 VARCHAR(40),

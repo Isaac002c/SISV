@@ -1,17 +1,18 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 
-const createUser = async ({ name, email, password, tenant_id, role = 'seller' }) => {
+const createUser = async ({ name, username, email, password, tenant_id, role = 'seller' }) => {
     const hashedPassword = await bcrypt.hash(password, 10);
+    const resolvedUsername = username || String(email || '').split('@')[0];
     const result = await pool.query(
-        'INSERT INTO users(name, email, password_hash, tenant_id, role) VALUES($1,$2,$3,$4,$5) RETURNING *',
-        [name, email, hashedPassword, tenant_id, role]
+        'INSERT INTO users(name, username, email, password_hash, tenant_id, role) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
+        [name, resolvedUsername, email, hashedPassword, tenant_id, role]
     );
     return result.rows[0];
 };
 
 const getUserByEmail = async (email) => {
-    const result = await pool.query('SELECT * FROM users WHERE email=$1', [email]);
+    const result = await pool.query('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL', [email]);
     return result.rows[0];
 };
 
@@ -36,7 +37,7 @@ const updateUserSeller = async (userId, sellerId) => {
 // Buscar usuário por id (tenant-scoped) — usado p/ nome do responsável em recibos
 const getUserById = async (userId, tenantId) => {
     const result = await pool.query(
-        'SELECT id, name, email, role FROM users WHERE id = $1 AND tenant_id = $2',
+        'SELECT id, name, username, email, role FROM users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL',
         [userId, tenantId]
     );
     return result.rows[0];
@@ -45,7 +46,10 @@ const getUserById = async (userId, tenantId) => {
 // Buscar usuários por tenant
 const getUsersByTenant = async (tenantId) => {
     const result = await pool.query(
-        'SELECT id, name, email, role, seller_id, created_at FROM users WHERE tenant_id = $1 ORDER BY name',
+        `SELECT id, name, username, email, role, seller_id, created_at
+         FROM users
+         WHERE tenant_id = $1 AND COALESCE(is_active, TRUE) = TRUE AND deleted_at IS NULL
+         ORDER BY name`,
         [tenantId]
     );
     return result.rows;

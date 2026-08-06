@@ -6,6 +6,18 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["node_modules/.bin/next", "start", "-p", "3000"],
       "port": 3000
+    },
+    {
+      "name": "sisv-demo-backend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["backend/sisv-demo-server.js"],
+      "port": 5000
+    },
+    {
+      "name": "sisv-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3001
     }
   ]
 }

@@ -46,7 +46,12 @@ const approve = async (id, reviewed_by, tenant_id) => {
   if (ttl === 'lead') {
     await pool.query('DELETE FROM multas_leads WHERE id=$1 AND tenant_id=$2', [req.target_id, tenant_id]);
   } else if (ttl === 'client') {
-    await pool.query('DELETE FROM clients WHERE id=$1 AND tenant_id=$2', [req.target_id, tenant_id]);
+    await pool.query(
+      `UPDATE clients
+       SET deleted_at=NOW(), deleted_by=$1, delete_reason=$2, updated_at=NOW()
+       WHERE id=$3 AND tenant_id=$4 AND deleted_at IS NULL`,
+      [reviewed_by || null, req.reason || 'Exclusão aprovada pelo administrador', req.target_id, tenant_id]
+    );
   } else if (ttl === 'contract') {
     await pool.query('DELETE FROM fines WHERE id=$1 AND tenant_id=$2', [req.target_id, tenant_id]);
   } else if (ttl === 'document') {

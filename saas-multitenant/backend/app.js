@@ -25,6 +25,7 @@ const targetsRoutes = require('./routes/targetsRoutes');
 const sellersRoutes = require('./routes/sellersRoutes');
 const forecastRoutes = require('./routes/forecastRoutes');
 const clientRoutes = require('./routes/clientRoutes');
+const clientFieldRoutes = require('./routes/clientFieldRoutes');
 const contractRoutes = require('./routes/contractRoutes');
 const documentRoutes = require('./routes/documentRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
@@ -43,7 +44,22 @@ const financialRoutes     = require('./routes/financialRoutes');
 const tenantConfigRoutes  = require('./routes/tenantConfigRoutes');
 const processRoutes       = require('./routes/processRoutes');
 const tenantRoutes        = require('./routes/tenantRoutes');
+const taskRoutes          = require('./routes/taskRoutes');
+const alertRoutes         = require('./routes/alertRoutes');
+const operationsRoutes    = require('./routes/operationsRoutes');
+const noteRoutes          = require('./routes/noteRoutes');
+const workflowRoutes      = require('./routes/workflowRoutes');
+const slaRoutes           = require('./routes/slaRoutes');
+const automationRoutes    = require('./routes/automationRoutes');
+// SISV 2.0 — comercial, back office, execução e financeiro operacional.
+const commercialRoutes    = require('./routes/commercialRoutes');
+const orderRoutes         = require('./routes/orderRoutes');
+const salesRoutes         = require('./routes/salesRoutes');
+const executionRoutes     = require('./routes/executionRoutes');
+const commercialDocRoutes = require('./routes/commercialDocRoutes');
+const backofficeRoutes    = require('./routes/backofficeRoutes');
 const { requireModule }   = require('./middlewares/requireModule');
+const requireActiveUser   = require('./middlewares/requireActiveUser');
 
 const app = express();
 
@@ -59,7 +75,7 @@ app.set('trust proxy', 1);
 const FRONTEND_URL = process.env.FRONTEND_URL || '';
 
 // Origens liberadas no CORS. Em produção, defina FRONTEND_URL com o domínio do
-// frontend do Nexos (Vercel). Sem branding/domínios de sistemas anteriores.
+// frontend do SISV. Sem branding/domínios de sistemas anteriores.
 const EXTRA_ORIGINS = (process.env.EXTRA_CORS_ORIGINS || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const allowedOrigins = [
@@ -77,7 +93,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
 };
 
 app.use(cors(corsOptions));
@@ -159,6 +175,7 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
 }));
 
 app.use('/api', tenantContext);
+app.use('/api', requireActiveUser);
 
 // ── Identidade e configuração do tenant (SISV) ───────────────────────────────
 app.use('/api/tenant', tenantRoutes);
@@ -166,11 +183,30 @@ app.use('/api/config', tenantConfigRoutes);
 
 // ── Núcleo operacional (habilitado para todos; SISV usa) ─────────────────────
 app.use('/api/clients', clientRoutes);
+app.use('/api/client-fields', requireModule('processos'), clientFieldRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api', saasRoutes);
 app.use('/api/fines', finesRoutes);
 app.use('/api/processes', requireModule('processos'), processRoutes);
+app.use('/api/tasks', requireModule('processos'), taskRoutes);
+app.use('/api/alerts', requireModule('processos'), alertRoutes);
+app.use('/api/operations', requireModule('processos'), operationsRoutes);
+app.use('/api/notes', requireModule('processos'), noteRoutes);
+app.use('/api/workflows', requireModule('processos'), workflowRoutes);
+app.use('/api/sla', requireModule('processos'), slaRoutes);
+app.use('/api/automations', requireModule('processos'), automationRoutes);
+
+// ── SISV 2.0: jornada comercial → back office → execução → finalização ───────
+// Todas sob o módulo 'processos' (o mesmo que habilita a operação do SISV), para
+// que tenants fora do escopo continuem sem acesso a estas rotas.
+app.use('/api/commercial', requireModule('processos'), commercialRoutes);
+app.use('/api/orders', requireModule('processos'), orderRoutes);
+app.use('/api', requireModule('processos'), salesRoutes);          // /receivables, /customer-payments, /sales
+app.use('/api', requireModule('processos'), executionRoutes);      // /service-orders, /payables, /commissions
+app.use('/api', requireModule('processos'), commercialDocRoutes);  // /doc-templates, /commercial-docs, /contracts-op, /fiscal-documents, /closure
+app.use('/api/backoffice', requireModule('processos'), backofficeRoutes);
+
 app.use('/api/users/management', userManagementRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/upload', uploadRoutes);
@@ -246,6 +282,6 @@ process.on('unhandledRejection', (reason) => {
   }
 
   app.listen(PORT, () => {
-    console.log(`Nexos API rodando na porta ${PORT} (${process.env.NODE_ENV || 'development'})`);
+    console.log(`SISV API rodando na porta ${PORT} (${process.env.NODE_ENV || 'development'})`);
   });
 })();

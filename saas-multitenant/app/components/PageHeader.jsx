@@ -1,5 +1,7 @@
 'use client';
 
+import OperationalHeaderTools from './OperationalHeaderTools';
+
 const pageInfo = {
   // Visão Geral
   home:       { title: 'Visão Geral',        subtitle: 'Resumo executivo da operação — clientes, processos, agenda e finanças.' },
@@ -32,6 +34,21 @@ const pageInfo = {
   deferidos:  { title: 'Deferidos',          subtitle: 'Processos com resultado deferido — prova social.' },
   documents:  { title: 'Documentos',         subtitle: 'Gerencie documentos e arquivos dos processos.' },
   history:    { title: 'Histórico',          subtitle: 'Registro completo de atividades e alterações.' },
+  'meu-trabalho': { title: 'Meu Trabalho', subtitle: 'Prioridades, pendências e processos sob sua responsabilidade.' },
+  atencao: { title: 'Central de Atenção', subtitle: 'Gargalos, prazos e inconsistências que exigem ação.' },
+  relatorios: { title: 'Relatórios', subtitle: 'Indicadores operacionais por período e filtros autorizados.' },
+  auditoria: { title: 'Auditoria', subtitle: 'Trilha global somente leitura das ações do sistema.' },
+  qualidade: { title: 'Qualidade dos dados', subtitle: 'Inconsistências operacionais para revisão assistida.' },
+  // SISV 2.0 — jornada comercial, back office, execução e financeiro operacional.
+  pedidos: { title: 'Pedidos', subtitle: 'Atendimento: solicitação comercial do cliente antes da venda.' },
+  backoffice: { title: 'Back Office', subtitle: 'Filas de conferência, validação documental e financeira.' },
+  execucao: { title: 'Execução', subtitle: 'Ordens de serviço, responsáveis, prazos, custos e finalização.' },
+  vendas: { title: 'Vendas', subtitle: 'Vendas confirmadas a partir de pedidos validados.' },
+  comissoes: { title: 'Comissões', subtitle: 'Comissões de parceiros e vendedores, confirmadas manualmente.' },
+  'financeiro-operacional': { title: 'Financeiro operacional', subtitle: 'Recebimentos, pagamentos do cliente, contas a pagar e comissões.' },
+  fornecedores: { title: 'Fornecedores e parceiros', subtitle: 'Fornecedores, prestadores, parceiros e correspondentes.' },
+  catalogo: { title: 'Serviços, produtos e preços', subtitle: 'Catálogo comercial e tabelas de preço com vigência.' },
+  'documentos-comerciais': { title: 'Documentos comerciais', subtitle: 'Templates, documentos gerados e contratos operacionais.' },
   // Leads
   overview:    { title: 'Overview',          subtitle: 'Visão geral de leads e desempenho.' },
   acquisition: { title: 'Aquisição',         subtitle: 'Gerenciamento e captação de novos leads.' },
@@ -81,15 +98,15 @@ export default function PageHeader({ currentTab, user, tenant, onLogout, onMobil
 
   const getRoleBadge = () => {
     if (role === 'admin') {
-      return { label: 'ADMIN', color: '#2563eb', bg: 'rgba(37, 99, 235,0.08)', border: 'rgba(37, 99, 235,0.2)' };
+      return { label: 'ADMIN', tone: 'primary' };
     }
     if (role === 'manager') {
-      return { label: 'GESTOR', color: '#2563eb', bg: 'rgba(37, 99, 235,0.08)', border: 'rgba(37, 99, 235,0.2)' };
+      return { label: 'GESTOR', tone: 'primary' };
     }
     if (role === 'operator') {
-      return { label: 'OPERADOR', color: '#15803d', bg: 'rgba(21,128,61,0.08)', border: 'rgba(21,128,61,0.2)' };
+      return { label: 'OPERADOR', tone: 'information' };
     }
-    return { label: 'CONSULTOR', color: '#475569', bg: 'rgba(71,85,105,0.08)', border: 'rgba(71,85,105,0.2)' };
+    return { label: 'CONSULTOR', tone: 'neutral' };
   };
 
   const badge = getRoleBadge();
@@ -107,6 +124,7 @@ export default function PageHeader({ currentTab, user, tenant, onLogout, onMobil
       </div>
 
       <div className="page-header-right">
+        <OperationalHeaderTools enabled={Array.isArray(tenant?.modules) && tenant.modules.includes('processos')} />
         {tenant?.name && (
           <div className="ph-tenant-badge">
             <BuildingIcon />
@@ -114,10 +132,7 @@ export default function PageHeader({ currentTab, user, tenant, onLogout, onMobil
           </div>
         )}
 
-        <div
-          className="ph-role-badge"
-          style={{ background: badge.bg, borderColor: badge.border, color: badge.color }}
-        >
+        <div className={`ph-role-badge ph-role-badge--${badge.tone}`}>
           {badge.label}
         </div>
 

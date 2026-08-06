@@ -4,11 +4,11 @@ Roteiro de validação controlada antes da produção. Use **dados fictícios/an
 — nunca dados reais de outro tenant. Ambiente sugerido: banco de homologação isolado.
 
 ## Preparação
-1. Aplicar migrations (ordem): `000_nexos_schema.sql` → `sisv_01_tenant_config.sql` → `sisv_02_documents.sql`.
+1. Aplicar migrations em ordem, de `000_nexos_schema.sql` até `sisv_11_client_fields_partners_contractors.sql`.
 2. Provisionar tenant: `DATABASE_URL=... node scripts/seed_sisv.js` (cria tenant SISV, 4 usuários e catálogos — **não cria clientes/processos fictícios**).
 3. Configurar `.env` (backend: `DATABASE_URL`, `JWT_SECRET`, `BASE_URL`; frontend: `BACKEND_URL`, `NEXT_PUBLIC_*`).
 
-## Roteiro (21 itens)
+## Roteiro (31 itens)
 | # | Item | Como validar | OK |
 |---|------|--------------|----|
 | 1 | Login | Entrar como gestor e como operador; token válido/expirado; usuário inativo | ☐ |
@@ -32,6 +32,16 @@ Roteiro de validação controlada antes da produção. Use **dados fictícios/an
 | 19 | Exportação | Exportar CSV da fila filtrada (abre no Excel, acentos ok) | ☐ |
 | 20 | Mobile | 360/390/768 px: fila em cards, filtros recolhíveis, drawer/modais na viewport, sem overflow | ☐ |
 | 21 | Isolamento de tenant | Alterar id/URL não acessa dados/documentos de outro tenant (401/403/404) | ☐ |
+| 22 | Campo adicional | Criar campo no catálogo, com tipo, dica e validação; editar sem duplicar a chave | ☐ |
+| 23 | Exigência por serviço | Vincular o campo a um serviço; confirmar que outro serviço não passa a exigi-lo | ☐ |
+| 24 | Cliente parcial | Cadastrar cliente sem serviço/campo extra; depois selecionar o serviço e completar o dado | ☐ |
+| 25 | Barreira no pedido | Enviar pedido sem o campo obrigatório retorna pendência; preencher e reenviar funciona | ☐ |
+| 26 | Cadastro de parceiro | Criar/editar parceiro com tabela, desconto, prazo, meio de pagamento, comissão e observação | ☐ |
+| 27 | Contratante separado | Pedido mantém cliente atendido e mostra parceiro contratante sem trocar `client_id` | ☐ |
+| 28 | Snapshot comercial | Alterar condições do parceiro não muda o pedido anterior | ☐ |
+| 29 | Inativação de parceiro | Parceiro sai do seletor, nova contratação é bloqueada e histórico continua legível | ☐ |
+| 30 | Fluxos seguintes | Prévia/venda/back office mostram cliente, contratante e condições aplicadas corretamente | ☐ |
+| 31 | Permissões comerciais | Usuário sem `catalog:manage`, `suppliers:manage` ou `pricing:read` recebe 403 | ☐ |
 
 ## Segurança de arquivos (validar)
 - Upload de `.exe`/`.zip` → rejeitado (extensão/MIME).

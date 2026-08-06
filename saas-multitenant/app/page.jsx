@@ -26,7 +26,7 @@ export default function Home() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: '#0f172a',
+      background: '#0B0B12',
       color: '#fff'
     }}>
       <div>Carregando...</div>

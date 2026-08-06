@@ -11,6 +11,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Pagination, EmptyState, PageHead, SkeletonRows } from '../components/ui';
 import * as api from '../lib/processesAPI';
+import {
+  advancedBatch, createView, deleteView, exportProcesses, listViews, updateView,
+  getOperationSettings,
+} from '../lib/operationsAPI';
 import { getConfig, getAssignees } from '../lib/tenantConfigAPI';
 import { fmtDate, prazoInfo, daysSince } from '../lib/format';
 import { Badge, Chip } from './ui';
@@ -41,19 +45,23 @@ export default function Processos({ initialFilters = {} }) {
   const [detailId, setDetailId] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [bulk, setBulk] = useState({ seller_id: '', department_id: '' });
+  const [bulkExtra, setBulkExtra] = useState({ stage: '', status: '', due_date: '', note: '', task_title: '', task_priority: 'normal' });
   const [bulkBusy, setBulkBusy] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [savedViews, setSavedViews] = useState([]);
+  const [operationSettings, setOperationSettings] = useState({ stale_after_days: 7, due_soon_days: 7, aging_bands: [2, 5, 10] });
   const searchDebounce = useRef(null);
   const loadSeq = useRef(0);
   const searchParams = useSearchParams();
 
   const byCode = (list, code) => list.find((x) => x.code === code);
 
-  // Presets vindos do dashboard/cliente (indicadores clicáveis → fila filtrada).
+  // URL e a fonte compartilhavel dos filtros. Somente chaves autorizadas entram
+  // no estado; o backend repete a validacao antes de montar SQL.
   useEffect(() => {
     const pre = searchParams.get('pre');
     const client = searchParams.get('client');
-    const base = { q: '', stage: '', status: '', seller_id: '', department_id: '', tenant_service_type_id: '', pending: '', finalized: '', stale_days: '', overdue: '', due_soon: '', client_id: '' };
+    const base = { q: '', stage: '', status: '', seller_id: '', department_id: '', tenant_service_type_id: '', pending: '', finalized: '', stale_days: '', aging: '', overdue: '', due_today: '', due_soon: '', missing_documents: '', client_id: '' };
     const map = {
       andamento: { finalized: 'false' },
       finalizados: { finalized: 'true' },
@@ -63,17 +71,51 @@ export default function Processos({ initialFilters = {} }) {
       vencidos: { overdue: 'true' },
       vencendo: { due_soon: 'true' },
     };
-    if (client) { setPage(1); setFilters({ ...base, client_id: client }); }
-    else if (map[pre]) { setPage(1); setFilters({ ...base, ...map[pre] }); }
+    const direct = {};
+    Object.keys(base).forEach((key) => {
+      if (searchParams.has(key)) direct[key] = searchParams.get(key);
+    });
+    if (client) direct.client_id = client;
+    if (map[pre]) Object.assign(direct, map[pre]);
+    if (Object.keys(direct).length) {
+      setPage(Math.max(1, Number(searchParams.get('page')) || 1));
+      setFilters({ ...base, ...direct });
+    }
+    const processId = searchParams.get('process');
+    if (processId) setDetailId(processId);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    ['q', 'stage', 'status', 'seller_id', 'department_id', 'tenant_service_type_id', 'pending', 'finalized', 'stale_days', 'aging', 'overdue', 'due_today', 'due_soon', 'missing_documents', 'client_id', 'page', 'sort_by', 'sort_dir'].forEach((key) => params.delete(key));
+    Object.entries(filters).forEach(([key, value]) => { if (value !== '' && value !== null && value !== undefined) params.set(key, value); });
+    if (page > 1) params.set('page', String(page));
+    if (sort.by !== 'last_moved_at') params.set('sort_by', sort.by);
+    if (sort.dir !== 'desc') params.set('sort_dir', sort.dir);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
+  }, [filters, page, sort]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      setDetailId(params.get('process'));
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   useEffect(() => {
     try { setUser(JSON.parse(localStorage.getItem('user') || 'null')); } catch { /* noop */ }
     (async () => {
       try {
-        const [cfg, users] = await Promise.all([getConfig(), getAssignees()]);
+        const [cfg, users, views, settings] = await Promise.all([
+          getConfig(), getAssignees(), listViews('processos'), getOperationSettings(),
+        ]);
         setConfig(cfg || { stages: [], statuses: [], serviceTypes: [], departments: [] });
         setAssignees(users || []);
+        setSavedViews(views || []);
+        setOperationSettings(settings || { stale_after_days: 7, due_soon_days: 7, aging_bands: [2, 5, 10] });
       } catch (e) { setError(e.message); }
     })();
   }, []);
@@ -109,12 +151,25 @@ export default function Processos({ initialFilters = {} }) {
     const parts = [];
     if (bulk.seller_id !== '') { changes.seller_id = bulk.seller_id === 'none' ? null : bulk.seller_id; parts.push(bulk.seller_id === 'none' ? 'sem responsável' : `responsável "${assignees.find((u) => u.id === bulk.seller_id)?.name || ''}"`); }
     if (bulk.department_id !== '') { changes.department_id = bulk.department_id === 'none' ? null : bulk.department_id; parts.push(bulk.department_id === 'none' ? 'sem setor' : `setor "${config.departments.find((d) => d.id === bulk.department_id)?.name || ''}"`); }
-    if (Object.keys(changes).length === 0) { setError('Escolha responsável e/ou setor para aplicar.'); return; }
+    if (bulkExtra.stage) { changes.stage = bulkExtra.stage; parts.push('alterar etapa'); }
+    if (bulkExtra.status) { changes.status = bulkExtra.status; parts.push('alterar status'); }
+    if (bulkExtra.due_date) { changes.due_date = bulkExtra.due_date; parts.push('alterar prazo'); }
+    const body = {
+      changes,
+      note: bulkExtra.note.trim() || undefined,
+      task: bulkExtra.task_title.trim() ? { title: bulkExtra.task_title.trim(), priority: bulkExtra.task_priority } : undefined,
+    };
+    if (body.note) parts.push('adicionar nota');
+    if (body.task) parts.push('criar pendência');
+    if (Object.keys(changes).length === 0 && !body.note && !body.task) { setError('Escolha ao menos uma ação para o lote.'); return; }
     if (!confirm(`Aplicar ${parts.join(' e ')} a ${selected.size} processo(s)?`)) return;
     setBulkBusy(true); setError(null);
     try {
-      const res = await api.batchAssign([...selected], changes);
+      const res = isAdmin
+        ? await advancedBatch([...selected], body)
+        : await api.batchAssign([...selected], changes);
       setSelected(new Set()); setBulk({ seller_id: '', department_id: '' });
+      setBulkExtra({ stage: '', status: '', due_date: '', note: '', task_title: '', task_priority: 'normal' });
       await load();
       if (res?.skipped) setError(null);
     } catch (e) { setError(e.message); }
@@ -133,7 +188,7 @@ export default function Processos({ initialFilters = {} }) {
   };
   const clearFilters = () => {
     setPage(1);
-    setFilters({ q: '', stage: '', status: '', seller_id: '', department_id: '', tenant_service_type_id: '', pending: '', finalized: '', stale_days: '', overdue: '', due_soon: '' });
+    setFilters({ q: '', stage: '', status: '', seller_id: '', department_id: '', tenant_service_type_id: '', pending: '', finalized: '', stale_days: '', aging: '', overdue: '', due_today: '', due_soon: '', missing_documents: '', client_id: '' });
   };
 
   const activeFilterCount = Object.entries(filters).filter(([k, v]) => k !== 'q' && v).length;
@@ -148,13 +203,25 @@ export default function Processos({ initialFilters = {} }) {
     pending: () => 'Com pendência',
     finalized: () => (filters.finalized === 'true' ? 'Finalizados' : 'Em andamento'),
     overdue: () => 'Prazo vencido',
-    due_soon: () => 'Vence em 7 dias',
-    stale_days: () => 'Sem movimentação (7d+)',
+    due_soon: () => `Vence em ${operationSettings.due_soon_days || 7} dias`,
+    due_today: () => 'Vence hoje',
+    missing_documents: () => 'Documentos faltantes',
+    stale_days: () => `Sem movimentação (${operationSettings.stale_after_days || 7}d+)`,
+    aging: () => `Aging: ${filters.aging.replaceAll('_', ' ')}`,
     client_id: () => 'Cliente específico',
   };
   const appliedChips = Object.entries(filters)
     .filter(([k, v]) => k !== 'q' && v)
     .map(([k]) => ({ key: k, label: chipLabel[k] ? chipLabel[k]() : k }));
+  const bands = Array.isArray(operationSettings.aging_bands) && operationSettings.aging_bands.length === 3
+    ? operationSettings.aging_bands.map(Number)
+    : [2, 5, 10];
+  const agingChips = [
+    [`ate_${bands[0]}`, `Aging até ${bands[0]}d`],
+    [`${bands[0] + 1}_a_${bands[1]}`, `${bands[0] + 1}–${bands[1]}d`],
+    [`${bands[1] + 1}_a_${bands[2]}`, `${bands[1] + 1}–${bands[2]}d`],
+    [`acima_${bands[2]}`, `${bands[2]}d+`],
+  ];
 
   // Ordenação por coluna (backend). Alterna asc/desc ao clicar no mesmo campo.
   const toggleSort = (field) => {
@@ -167,25 +234,70 @@ export default function Processos({ initialFilters = {} }) {
   const exportCSV = async () => {
     setExporting(true);
     try {
-      const res = await api.listProcesses({ ...filters, sort_by: sort.by, sort_dir: sort.dir, limit: 200, offset: 0 });
-      const cols = [
-        ['Cliente', (r) => r.client_name], ['CPF/CNPJ', (r) => r.client_cpf],
-        ['Número', (r) => r.fine_number], ['Protocolo', (r) => r.protocol_number],
-        ['Serviço', (r) => r.service_type_label], ['Etapa', (r) => byCode(config.stages, r.stage)?.label || r.stage],
-        ['Status', (r) => byCode(config.statuses, r.status)?.label || r.status], ['Responsável', (r) => r.seller_name || 'Sem responsável'],
-        ['Setor', (r) => r.department_name], ['Prazo', (r) => prazoInfo(r.due_date, r.finalized_at).text],
-        ['Última movimentação', (r) => fmtDate(r.last_moved_at || r.updated_at)], ['Finalizado', (r) => (r.finalized_at ? 'Sim' : 'Não')],
-      ];
-      const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const lines = [cols.map((c) => esc(c[0])).join(';')];
-      res.rows.forEach((r) => lines.push(cols.map((c) => esc(c[1](r))).join(';')));
-      const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `processos-${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click(); URL.revokeObjectURL(url);
+      await exportProcesses({
+        ids: selected.size ? [...selected] : undefined,
+        filters,
+        sort_by: sort.by,
+        sort_dir: sort.dir,
+      });
     } catch (e) { setError(e.message); }
     finally { setExporting(false); }
+  };
+
+  const saveCurrentView = async () => {
+    const name = window.prompt('Nome da visualização:');
+    if (!name?.trim()) return;
+    try {
+      await createView({
+        name: name.trim(),
+        view_type: 'processos',
+        filters: Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '')),
+        sort_config: { by: sort.by, dir: sort.dir },
+        is_favorite: true,
+      });
+      setSavedViews(await listViews('processos'));
+    } catch (e) { setError(e.message); }
+  };
+
+  const applyView = (view) => {
+    setPage(1);
+    setFilters((current) => ({ ...Object.fromEntries(Object.keys(current).map((key) => [key, ''])), ...(view.filters || {}) }));
+    if (view.sort_config?.by) setSort({ by: view.sort_config.by, dir: view.sort_config.dir || 'desc' });
+  };
+
+  const removeView = async (view) => {
+    if (!view.owned || !confirm(`Excluir a visualização "${view.name}"?`)) return;
+    try { await deleteView(view.id); setSavedViews(await listViews('processos')); }
+    catch (e) { setError(e.message); }
+  };
+
+  const manageView = async (view, action) => {
+    if (!view.owned) return;
+    try {
+      if (action === 'rename') {
+        const name = window.prompt('Novo nome da visualização:', view.name);
+        if (!name?.trim() || name.trim() === view.name) return;
+        await updateView(view.id, { name: name.trim() });
+      } else if (action === 'default') {
+        await updateView(view.id, { is_default: !view.is_default });
+      } else if (action === 'share' && isAdmin) {
+        await updateView(view.id, { shared_tenant: !view.shared_tenant });
+      }
+      setSavedViews(await listViews('processos'));
+    } catch (e) { setError(e.message); }
+  };
+
+  const openDetail = (id) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('process', id);
+    window.history.pushState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
+    setDetailId(id);
+  };
+  const closeDetail = () => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('process');
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
+    setDetailId(null);
   };
 
   return (
@@ -207,6 +319,23 @@ export default function Processos({ initialFilters = {} }) {
           <button onClick={() => setError(null)} className="btn-close">✕</button>
         </div>
       )}
+
+      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+        <button className="btn-secondary" onClick={saveCurrentView}>Salvar visualização</button>
+        {savedViews.map((view) => (
+          <span key={view.id} style={{ display: 'inline-flex', border: '1px solid #d1d5db', borderRadius: 999, overflow: 'hidden' }}>
+            <button onClick={() => applyView(view)} style={{ border: 0, background: view.is_default ? '#f0fdf4' : '#fff', padding: '5px 10px', cursor: 'pointer', fontSize: 12 }}>{view.name}</button>
+            {view.owned && (
+              <>
+                <button aria-label={`${view.is_default ? 'Remover padrão de' : 'Definir como padrão'} ${view.name}`} title="Visualização padrão" onClick={() => manageView(view, 'default')} style={viewActionStyle}>{view.is_default ? '★' : '☆'}</button>
+                <button aria-label={`Renomear ${view.name}`} title="Renomear" onClick={() => manageView(view, 'rename')} style={viewActionStyle}>✎</button>
+                {isAdmin && <button aria-label={`${view.shared_tenant ? 'Parar de compartilhar' : 'Compartilhar'} ${view.name}`} title="Compartilhar com o tenant" onClick={() => manageView(view, 'share')} style={viewActionStyle}>{view.shared_tenant ? '↗' : '⇧'}</button>}
+                <button aria-label={`Excluir ${view.name}`} title="Excluir" onClick={() => removeView(view)} style={{ ...viewActionStyle, color: '#b91c1c' }}>×</button>
+              </>
+            )}
+          </span>
+        ))}
+      </div>
 
       {/* Filtros — selects viram painel recolhível no mobile */}
       <div className="clients-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
@@ -251,9 +380,18 @@ export default function Processos({ initialFilters = {} }) {
         <Chip active={filters.finalized === 'true'} onClick={() => setFilter('finalized', filters.finalized === 'true' ? '' : 'true')}>Finalizados</Chip>
         <Chip active={filters.pending === 'true'} onClick={() => setFilter('pending', filters.pending === 'true' ? '' : 'true')}>Com pendência</Chip>
         <Chip active={filters.overdue === 'true'} onClick={() => setFilter('overdue', filters.overdue === 'true' ? '' : 'true')}>Prazo vencido</Chip>
-        <Chip active={filters.due_soon === 'true'} onClick={() => setFilter('due_soon', filters.due_soon === 'true' ? '' : 'true')}>Vence em 7 dias</Chip>
+        <Chip
+          active={filters.due_soon === String(operationSettings.due_soon_days || 7)}
+          onClick={() => setFilter('due_soon', filters.due_soon === String(operationSettings.due_soon_days || 7) ? '' : String(operationSettings.due_soon_days || 7))}
+        >Vence em {operationSettings.due_soon_days || 7} dias</Chip>
         <Chip active={filters.seller_id === 'none'} onClick={() => setFilter('seller_id', filters.seller_id === 'none' ? '' : 'none')}>Sem responsável</Chip>
-        <Chip active={filters.stale_days === '7'} onClick={() => setFilter('stale_days', filters.stale_days === '7' ? '' : '7')}>Sem movimentação (7d+)</Chip>
+        <Chip
+          active={filters.stale_days === String(operationSettings.stale_after_days || 7)}
+          onClick={() => setFilter('stale_days', filters.stale_days === String(operationSettings.stale_after_days || 7) ? '' : String(operationSettings.stale_after_days || 7))}
+        >Sem movimentação ({operationSettings.stale_after_days || 7}d+)</Chip>
+        {agingChips.map(([code, label]) => (
+          <Chip key={code} active={filters.aging === code} onClick={() => setFilter('aging', filters.aging === code ? '' : code)}>{label}</Chip>
+        ))}
       </div>
 
       {/* Filtros aplicados: chips com remoção individual (nunca filtro invisível) */}
@@ -287,6 +425,30 @@ export default function Processos({ initialFilters = {} }) {
               {config.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           )}
+          {isAdmin && (
+            <details style={{ flexBasis: '100%' }}>
+              <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: '#166534' }}>Mais ações em lote</summary>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                <select aria-label="Etapa em lote" className="clients-filter-select" value={bulkExtra.stage} onChange={(e) => setBulkExtra((b) => ({ ...b, stage: e.target.value }))}>
+                  <option value="">Manter etapa</option>
+                  {config.stages.map((item) => <option key={item.id} value={item.code}>{item.label}</option>)}
+                </select>
+                <select aria-label="Status em lote" className="clients-filter-select" value={bulkExtra.status} onChange={(e) => setBulkExtra((b) => ({ ...b, status: e.target.value }))}>
+                  <option value="">Manter status</option>
+                  {config.statuses.map((item) => <option key={item.id} value={item.code}>{item.label}</option>)}
+                </select>
+                <input aria-label="Prazo em lote" type="date" value={bulkExtra.due_date} onChange={(e) => setBulkExtra((b) => ({ ...b, due_date: e.target.value }))} />
+                <input aria-label="Nota em lote" placeholder="Observação comum…" value={bulkExtra.note} onChange={(e) => setBulkExtra((b) => ({ ...b, note: e.target.value }))} />
+                <input aria-label="Pendência em lote" placeholder="Título da pendência…" value={bulkExtra.task_title} onChange={(e) => setBulkExtra((b) => ({ ...b, task_title: e.target.value }))} />
+                {bulkExtra.task_title && (
+                  <select aria-label="Prioridade da pendência em lote" value={bulkExtra.task_priority} onChange={(e) => setBulkExtra((b) => ({ ...b, task_priority: e.target.value }))}>
+                    <option value="baixa">Baixa</option><option value="normal">Normal</option>
+                    <option value="alta">Alta</option><option value="critica">Crítica</option>
+                  </select>
+                )}
+              </div>
+            </details>
+          )}
           <button className="btn-primary" disabled={bulkBusy} onClick={applyBulk}>{bulkBusy ? 'Aplicando...' : 'Aplicar'}</button>
           <button className="btn-secondary" onClick={() => setSelected(new Set())}>Limpar seleção</button>
         </div>
@@ -313,9 +475,9 @@ export default function Processos({ initialFilters = {} }) {
             ) : rows.length === 0 ? (
               <tr><td colSpan="10"><EmptyState title="Nenhum processo encontrado" description="Ajuste os filtros ou cadastre um novo processo." /></td></tr>
             ) : rows.map((p) => {
-              const stale = !p.finalized_at && daysSince(p.last_moved_at || p.updated_at) >= 7;
+              const stale = !p.finalized_at && (p.aging_days ?? daysSince(p.last_moved_at || p.updated_at)) >= 7;
               return (
-                <tr key={p.id} className="clickable-row" onClick={() => setDetailId(p.id)}>
+                <tr key={p.id} className="clickable-row" onClick={() => openDetail(p.id)}>
                   <td className="proc-select" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelect(p.id)} aria-label={`Selecionar ${p.fine_number || p.client_name}`} />
                   </td>
@@ -340,6 +502,7 @@ export default function Processos({ initialFilters = {} }) {
                   </td>
                   <td data-label="Movimentação" style={{ whiteSpace: 'nowrap', color: stale ? '#ef4444' : '#475569', fontWeight: stale ? 600 : 400 }}>
                     {fmtDate(p.last_moved_at || p.updated_at)}{stale && ' ⚠'}
+                    {!p.finalized_at && <div style={{ fontSize: 10.5, color: p.aging_days > 10 ? '#dc2626' : '#64748b' }}>{p.aging_days ?? daysSince(p.last_moved_at || p.updated_at)} dia(s) parado</div>}
                     {p.finalized_at && <span style={{ fontSize: 11, color: '#16a34a', marginLeft: 6 }}>Finalizado</span>}
                   </td>
                 </tr>
@@ -362,7 +525,7 @@ export default function Processos({ initialFilters = {} }) {
       {detailId && (
         <ProcessDrawer
           id={detailId} config={config} assignees={assignees} isAdmin={isAdmin}
-          onClose={() => setDetailId(null)}
+          onClose={closeDetail}
           onChanged={load}
         />
       )}
@@ -370,3 +533,11 @@ export default function Processos({ initialFilters = {} }) {
   );
 }
 
+const viewActionStyle = {
+  border: 0,
+  borderLeft: '1px solid #e2e8f0',
+  background: '#fff',
+  color: '#64748b',
+  minWidth: 26,
+  cursor: 'pointer',
+};

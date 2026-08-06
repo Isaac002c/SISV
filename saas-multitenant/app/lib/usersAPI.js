@@ -8,6 +8,9 @@ export const getUsers = async () =>
 export const getUsersStats = async () =>
   await apiRequest('/api/users/management/stats');
 
+export const getAccessOptions = async () =>
+  await apiRequest('/api/users/management/access-options');
+
 export const getRoles = async () =>
   await apiRequest('/api/users/management/roles');
 
@@ -35,4 +38,13 @@ export const changePassword = async (id, password) =>
 export const deleteUser = async (id) =>
   await apiRequest(`/api/users/management/${id}`, {
     method: 'DELETE',
+  });
+
+export const getUserWorkload = async (id) =>
+  await apiRequest(`/api/users/management/${id}/workload`);
+
+export const deactivateUser = async (id, redistribute_to = null) =>
+  await apiRequest(`/api/users/management/${id}/deactivate`, {
+    method: 'POST',
+    body: { redistribute_to },
   });

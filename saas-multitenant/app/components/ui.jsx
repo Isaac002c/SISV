@@ -1,8 +1,8 @@
 'use client';
 
 // =============================================================================
-// ui.jsx — Componentes reutilizáveis do design system NEXO.
-// Consomem os tokens .nx-* de globals.css. Sem dependências externas.
+// ui.jsx — Componentes reutilizáveis do design system SISV / TELUN.
+// Consomem tokens semânticos centralizados em globals.css. Sem dependências.
 // =============================================================================
 
 import { useEffect, useState } from 'react';
@@ -80,9 +80,9 @@ export function EmptyState({ title = 'Nada por aqui', description, actionLabel, 
   return (
     <div className="nx-empty" style={small ? { padding: '20px 12px' } : undefined}>
       {icon || (
-        <svg width={small ? 28 : 40} height={small ? 28 : 40} viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5">
-          <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
-          <path d="M3 9h18" /><circle cx="17.5" cy="17.5" r="3.5" /><path d="M17.5 16v1.5l1 1" />
+        <svg className="nx-empty-origin" width={small ? 28 : 40} height={small ? 28 : 40} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <path d="M3 4l7 7M3 20l7-7M21 4l-7 7M21 20l-7-7" />
+          <circle cx="12" cy="12" r="2.5" />
         </svg>
       )}
       <h4>{title}</h4>

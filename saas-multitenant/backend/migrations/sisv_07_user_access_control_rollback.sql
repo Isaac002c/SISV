@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS trg_enforce_tenant_active_user_limit ON users;
+DROP FUNCTION IF EXISTS enforce_tenant_active_user_limit();
+DROP INDEX IF EXISTS idx_users_access_profile;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_module_access_array_check;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_backoffice_level_check;
+ALTER TABLE users DROP COLUMN IF EXISTS backoffice_level;
+ALTER TABLE users DROP COLUMN IF EXISTS module_access;
+ALTER TABLE users DROP COLUMN IF EXISTS access_profile;
+ALTER TABLE users DROP COLUMN IF EXISTS phone;
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_user_limit_check;
+ALTER TABLE tenants DROP COLUMN IF EXISTS user_limit;

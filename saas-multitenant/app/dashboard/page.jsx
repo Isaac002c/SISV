@@ -21,7 +21,6 @@ import MultasCompanies from '../multas/Companies';
 import MultasDeferidos from '../multas/Deferidos';
 import CalendarioEventos from '../multas/CalendarioEventos';
 import MultasHistory   from '../multas/History';
-import MultasLeads     from '../multas/Leads';
 import MultasLeadsList from '../multas/LeadsList';
 import MultasTarefas   from '../multas/Tarefas';
 import MultasApprovals from '../multas/Approvals';
@@ -31,9 +30,29 @@ import MultasUsers     from '../multas/Users';
 // SISV — processos de CNH (operação Sinal Verde)
 import Processos       from '../sisv/Processos';
 import ProcessosConfig from '../sisv/ProcessosConfig';
-import DashboardSISV   from '../sisv/DashboardSISV';
+import DashboardSISV   from '../sisv/comercial/DashboardHub';
 import HistoricoSISV   from '../sisv/HistoricoSISV';
-import { APP_BRAND, getTenantModules, isModuleEnabled } from '../lib/brand';
+import MeuTrabalho     from '../sisv/MeuTrabalho';
+import CentralAtencao  from '../sisv/CentralAtencao';
+import RelatoriosSISV  from '../sisv/comercial/RelatoriosHub';
+import { AuditoriaSISV, QualidadeSISV } from '../sisv/GovernancaSISV';
+
+// SISV 2.0 — jornada comercial, back office, execução e financeiro operacional.
+import Pedidos             from '../sisv/comercial/Pedidos';
+import BackOfficeSISV      from '../sisv/comercial/BackOffice';
+import ExecucaoSISV        from '../sisv/comercial/Execucao';
+import FinanceiroOperacional from '../sisv/comercial/Financeiro';
+import Fornecedores        from '../sisv/comercial/Fornecedores';
+import CatalogoComercial   from '../sisv/comercial/Catalogo';
+import DocumentosComerciais from '../sisv/comercial/Documentos';
+import RelatoriosComerciais from '../sisv/comercial/Relatorios';
+import {
+  APP_BRAND,
+  getTenantModules,
+  getUserModules,
+  hasAnyUserModule,
+  isModuleEnabled,
+} from '../lib/brand';
 
 // Financeiro
 import dynamic from 'next/dynamic';
@@ -95,9 +114,26 @@ const modulePages = {
     pages: {
       dashboard:     DashboardRouter,
       processos:     Processos,
+      'meu-trabalho': MeuTrabalho,
+      atencao:        CentralAtencao,
+      relatorios:     RelatoriosSISV,
+      auditoria:      AuditoriaSISV,
+      qualidade:      QualidadeSISV,
       configuracoes: ProcessosConfig,
       users:         MultasUsers,
       clients:       MultasClients,
+
+      // ── SISV 2.0 ────────────────────────────────────────────────────────
+      pedidos:                  Pedidos,
+      backoffice:               BackOfficeSISV,
+      execucao:                 ExecucaoSISV,
+      'financeiro-operacional': FinanceiroOperacional,
+      vendas:                   () => <FinanceiroOperacional initialTab="vendas" />,
+      comissoes:                () => <FinanceiroOperacional initialTab="comissoes" />,
+      fornecedores:             Fornecedores,
+      catalogo:                 CatalogoComercial,
+      'documentos-comerciais':  DocumentosComerciais,
+
       companies:     MultasCompanies,
       leads:         MultasLeadsList,
       tarefas:       MultasTarefas,
@@ -222,10 +258,17 @@ function DashboardContent() {
     if (!user || !tenant) return;
     const modules = getTenantModules(tenant);
     if (modules == null) return; // legado: tudo liberado
+    const userModules = getUserModules(user);
     const TAB_MODULE = {
       dashboard: 'dashboard', processos: 'processos', configuracoes: 'config', users: 'usuarios',
+      'meu-trabalho': 'processos', atencao: 'processos', relatorios: 'processos',
+      auditoria: 'processos', qualidade: 'processos',
       clients: 'clientes', companies: 'empresas', deferidos: 'deferidos', leads: 'leads',
       tarefas: 'tarefas', calendario: 'agenda', eventos: 'agenda', history: 'historico', approvals: 'aprovacoes',
+      // SISV 2.0 — todas sob o módulo 'processos', igual ao gate do backend.
+      pedidos: 'processos', backoffice: 'processos', execucao: 'processos',
+      'financeiro-operacional': 'processos', vendas: 'processos', comissoes: 'processos',
+      fornecedores: 'processos', catalogo: 'processos', 'documentos-comerciais': 'processos',
     };
     let allowed = true;
     if (currentModule === 'financeiro') allowed = isModuleEnabled(modules, 'financeiro');
@@ -237,12 +280,61 @@ function DashboardContent() {
       // Abas administrativas: bloqueadas por rota para não-admin (complementa o
       // enforcement do backend, que já rejeita as escritas).
       const ADMIN_ONLY = ['configuracoes', 'users', 'history'];
-      if (allowed && ADMIN_ONLY.includes(activeTab) && user.role !== 'admin' && user.role !== 'manager') {
+      const MANAGER_OR_ADMIN = ['atencao', 'auditoria', 'qualidade', 'catalogo'];
+      // Abas do SISV 2.0 restritas por perfil. O backend continua sendo a
+      // barreira real (checkPermission); isto só evita abrir uma tela vazia.
+      const ROLE_RESTRICTED = {
+        backoffice: ['admin', 'manager', 'back_office', 'sales_backoffice', 'finance'],
+        vendas: ['admin', 'manager', 'front_office', 'back_office', 'sales_backoffice', 'finance'],
+        'financeiro-operacional': ['admin', 'manager', 'finance', 'back_office', 'sales_backoffice'],
+        comissoes: ['admin', 'manager', 'finance'],
+        relatorios: ['admin', 'manager', 'finance'],
+      };
+      if (allowed && ADMIN_ONLY.includes(activeTab) && user.role !== 'admin') {
+        allowed = false;
+      }
+      if (allowed && MANAGER_OR_ADMIN.includes(activeTab) && user.role !== 'admin' && user.role !== 'manager') {
+        allowed = false;
+      }
+      if (allowed && ROLE_RESTRICTED[activeTab] && !ROLE_RESTRICTED[activeTab].includes(user.role)) {
+        allowed = false;
+      }
+
+      const USER_ACCESS_BY_TAB = {
+        clients: ['sales', 'backoffice', 'payments', 'operations'],
+        pedidos: ['sales', 'backoffice'],
+        'documentos-comerciais': ['sales', 'backoffice'],
+        backoffice: ['backoffice'],
+        vendas: ['sales', 'backoffice'],
+        execucao: ['operations'],
+        processos: ['backoffice', 'operations'],
+        'meu-trabalho': ['backoffice', 'operations'],
+        atencao: ['backoffice', 'operations'],
+        'financeiro-operacional': ['payments'],
+        fornecedores: ['payments'],
+        comissoes: ['payments'],
+        relatorios: ['sales', 'backoffice', 'payments', 'operations'],
+        qualidade: ['backoffice', 'operations'],
+        auditoria: ['backoffice', 'operations'],
+        catalogo: ['sales'],
+        companies: ['sales'],
+        leads: ['sales'],
+        tarefas: ['backoffice', 'operations'],
+        calendario: ['backoffice', 'operations'],
+        eventos: ['backoffice', 'operations'],
+      };
+      if (allowed && user.role !== 'admin' && !hasAnyUserModule(userModules, USER_ACCESS_BY_TAB[activeTab])) {
         allowed = false;
       }
     }
+    if (allowed && currentModule === 'financeiro' && user.role !== 'admin'
+        && !hasAnyUserModule(userModules, ['payments'])) allowed = false;
     if (!allowed) {
-      const home = isModuleEnabled(modules, 'processos') ? 'processos' : 'dashboard';
+      const home = userModules?.includes('sales') ? 'pedidos'
+        : userModules?.includes('backoffice') ? 'backoffice'
+          : userModules?.includes('payments') ? 'financeiro-operacional'
+            : userModules?.includes('operations') ? 'meu-trabalho'
+              : (isModuleEnabled(modules, 'processos') ? 'processos' : 'dashboard');
       router.replace(`/dashboard?module=multas&tab=${home}`);
     }
   }, [user, tenant, currentModule, activeTab, router]);

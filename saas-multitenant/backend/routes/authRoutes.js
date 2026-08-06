@@ -87,8 +87,13 @@ router.post('/register',
 router.post('/login',
   loginLimiter,
   [
-    body('email').isEmail().normalizeEmail({ gmail_remove_dots: false }),
+    body('login').optional().isString().trim().isLength({ min: 1, max: 120 }),
+    body('email').optional().isString().trim().isLength({ min: 1, max: 160 }),
     body('password').isLength({ min: 6 }).trim(),
+    body().custom((_value, { req }) => {
+      if (String(req.body?.login || req.body?.email || '').trim()) return true;
+      throw new Error('Informe o usuário.');
+    }),
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -98,29 +103,36 @@ router.post('/login',
 
     let client;
     try {
-      const { email, password } = req.body;
+      const login = String(req.body.login || req.body.email || '').trim();
+      const { password } = req.body;
 
       client = await pool.connect();
 
-      // Busca todos os usuários com esse e-mail (multi-tenant: pode haver mais de um)
+      // O login oficial usa username. O email permanece apenas como fallback
+      // temporário para usuários legados e para o painel master.
       const result = await client.query(
-        `SELECT u.id, u.name, u.email, u.password_hash, u.tenant_id, u.role,
+        `SELECT u.id, u.name, u.username, u.email, u.password_hash, u.tenant_id, u.role,
+                u.phone, u.access_profile, u.module_access, u.backoffice_level,
+                COALESCE(u.is_active, TRUE) AS is_active,
                 t.name as tenant_name, t.slug as tenant_slug, t.status as tenant_status,
                 t.logo_url as tenant_logo_url, t.brand_color as tenant_brand_color,
                 t.brand_color_dark as tenant_brand_color_dark, t.tagline as tenant_tagline,
                 t.developer as tenant_developer, t.modules as tenant_modules
          FROM users u
          JOIN tenants t ON u.tenant_id = t.id
-         WHERE u.email = $1
+         WHERE (LOWER(u.username) = LOWER($1)
+            OR LOWER(u.email) = LOWER($1))
+           AND u.deleted_at IS NULL
          ORDER BY u.created_at ASC`,
-        [email]
+        [login]
       );
 
       if (result.rows.length === 0) {
         return sendJson(res, 401, { success: false, message: 'Credenciais inválidas' });
       }
 
-      // Valida a senha contra cada usuário encontrado (suporta colisão de e-mail entre tenants)
+      // Valida a senha contra cada usuário encontrado (suporta o mesmo username
+      // em tenants diferentes sem misturar os dados).
       let user = null;
       for (const candidate of result.rows) {
         const match = await bcryptjs.compare(password, candidate.password_hash);
@@ -134,20 +146,25 @@ router.post('/login',
         return sendJson(res, 401, { success: false, message: 'Credenciais inválidas' });
       }
 
-      // Bloqueia login se a empresa (tenant) estiver inativa — super_admin sempre pode entrar.
-      if (user.role !== 'super_admin' && user.tenant_status && user.tenant_status !== 'ativo') {
-        return sendJson(res, 403, { success: false, message: 'Empresa inativa. Contate o suporte do Nexos.' });
+      if (!user.is_active) {
+        return sendJson(res, 403, { success: false, message: 'Usuario inativo. Contate o administrador.' });
       }
 
-      // Aviso operacional: mesmo e-mail em múltiplos tenants
+      // Bloqueia login se a empresa (tenant) estiver inativa — super_admin sempre pode entrar.
+      if (user.role !== 'super_admin' && user.tenant_status && user.tenant_status !== 'ativo') {
+        return sendJson(res, 403, { success: false, message: 'Empresa inativa. Contate o suporte do SISV.' });
+      }
+
+      // Aviso operacional: mesmo identificador em múltiplos tenants.
       if (result.rows.length > 1) {
-        console.warn(`[LOGIN] E-mail "${email}" existe em ${result.rows.length} tenants. Logando no primeiro com senha válida.`);
+        console.warn(`[LOGIN] Identificador "${login}" existe em ${result.rows.length} tenants. Logando no primeiro com senha válida.`);
       }
 
       const token = jwt.sign(
         {
           userId: user.id,
           tenantId: user.tenant_id,
+          username: user.username,
           email: user.email,
           role: user.role || 'admin'
         },
@@ -157,6 +174,11 @@ router.post('/login',
 
       // Último acesso (não bloqueia o login se falhar)
       await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]).catch(() => {});
+      await client.query(
+        `INSERT INTO activity_logs (tenant_id,user_id,entity,entity_id,entity_name,action,details)
+         VALUES ($1,$2,'usuario',$2,$3,'login',$4::jsonb)`,
+        [user.tenant_id, user.id, user.name, JSON.stringify({ username: user.username })]
+      ).catch(() => {});
 
       const cookieOptions = {
         httpOnly: true,
@@ -175,8 +197,13 @@ router.post('/login',
         user: {
           id: user.id,
           name: user.name,
+          username: user.username,
           email: user.email,
-          role: user.role || 'admin'
+          role: user.role || 'admin',
+          phone: user.phone || null,
+          access_profile: user.access_profile || null,
+          module_access: Array.isArray(user.module_access) ? user.module_access : null,
+          backoffice_level: Number(user.backoffice_level || 0)
         },
         tenant: {
           id: user.tenant_id,

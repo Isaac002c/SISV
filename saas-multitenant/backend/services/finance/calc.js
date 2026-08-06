@@ -213,9 +213,9 @@ function splitInstallments(total, n) {
 
 // ── Recibo ───────────────────────────────────────────────────────────────────
 
-// Formata o número do recibo: ('NEXO', 1) → 'NEXO-000001'
+// Formata o número do recibo: ('SISV', 1) → 'SISV-000001'
 function formatReceiptNumber(prefix, n, pad = 6) {
-  const p = (prefix || 'NEXO').toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'NEXO';
+  const p = (prefix || 'SISV').toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SISV';
   const num = String(Math.max(0, parseInt(n, 10) || 0)).padStart(pad, '0');
   return `${p}-${num}`;
 }

@@ -63,3 +63,6 @@ Thumbs.db
 
 # Cobertura de testes
 coverage/
+
+# Copias de trabalho de agentes — nao versionar
+.codex-tmp/

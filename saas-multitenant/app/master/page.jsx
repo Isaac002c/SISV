@@ -10,7 +10,7 @@ const fmtDateTime = (v) => { if (!v) return 'nunca'; const dt = new Date(v); ret
 const slugify = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
 const EMPTY = { name: '', slug: '', email: '', adminName: '', adminEmail: '', adminPassword: '', status: 'ativo' };
-const WINE = '#2563eb';
+const WINE = '#7B43CE';
 
 function Stat({ label, value, color }) {
   return (
@@ -167,10 +167,10 @@ export default function MasterPanel() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
-      {/* Topo institucional Chronostek (master) */}
-      <header style={{ background: 'linear-gradient(160deg,#0a0f1e,#0d1428)', color: '#fff', padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Topo institucional TELUN (master) */}
+      <header style={{ background: 'linear-gradient(135deg,#0B0B12,#3B1F6A)', color: '#fff', padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 8, background: WINE, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>N</div>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: '#A56FFF', color: '#0B0B12', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>T</div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>{APP_BRAND.name} · Painel Master</div>
             <div style={{ fontSize: 11, color: '#94a3b8' }}>Gestão do SaaS — multi-tenant</div>

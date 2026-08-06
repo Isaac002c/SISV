@@ -17,8 +17,8 @@ const SISV_IDENTITY = {
   slug: SISV_SLUG,
   tagline: 'Sistema Integrado da Sinal Verde',
   developer: 'TELUN',
-  brand_color: '#15803d',        // verde (Sinal Verde)
-  brand_color_dark: '#052e16',
+  brand_color: '#A56FFF',        // TELUN — Lilás Elétrico
+  brand_color_dark: '#3B1F6A',   // TELUN — Violeta Profundo
   logo_url: null,
   status: 'ativo',
 };
@@ -29,9 +29,9 @@ const SISV_MODULES = ['dashboard', 'clientes', 'processos', 'documentos', 'histo
 // Etapas de tramitação (onde o processo está no fluxo). is_final encerra.
 const SISV_STAGES = [
   { code: 'ENTRADA',     label: 'Entrada',     color: '#64748b', sort_order: 1, is_final: false },
-  { code: 'ELABORACAO',  label: 'Elaboração',  color: '#0ea5e9', sort_order: 2, is_final: false },
-  { code: 'DEFESA',      label: 'Defesa',      color: '#8b5cf6', sort_order: 3, is_final: false },
-  { code: 'JULGAMENTO',  label: 'Julgamento',  color: '#f59e0b', sort_order: 4, is_final: false },
+  { code: 'ELABORACAO',  label: 'Elaboração',  color: '#A56FFF', sort_order: 2, is_final: false },
+  { code: 'DEFESA',      label: 'Defesa',      color: '#3B1F6A', sort_order: 3, is_final: false },
+  { code: 'JULGAMENTO',  label: 'Julgamento',  color: '#FF6A3D', sort_order: 4, is_final: false },
   { code: 'FINALIZADO',  label: 'Finalizado',  color: '#16a34a', sort_order: 5, is_final: true },
 ];
 
@@ -40,7 +40,7 @@ const SISV_STATUSES = [
   { code: 'PENDENTE',              label: 'Pendente',              color: '#f59e0b', sort_order: 1, is_pending: true },
   { code: 'EM_ANALISE',           label: 'Em análise',            color: '#0ea5e9', sort_order: 2, is_pending: false },
   { code: 'AGUARDANDO_DOCUMENTO', label: 'Aguardando documento',  color: '#ef4444', sort_order: 3, is_pending: true },
-  { code: 'PROTOCOLADO',          label: 'Protocolado',           color: '#6366f1', sort_order: 4, is_pending: false },
+  { code: 'PROTOCOLADO',          label: 'Protocolado',           color: '#3B1F6A', sort_order: 4, is_pending: false },
   { code: 'REDISTRIBUIDO',        label: 'Redistribuído',         color: '#14b8a6', sort_order: 5, is_pending: false },
   { code: 'DEFERIDO',             label: 'Deferido',              color: '#16a34a', sort_order: 6, is_pending: false },
   { code: 'INDEFERIDO',           label: 'Indeferido',            color: '#991b1b', sort_order: 7, is_pending: false },
@@ -51,9 +51,9 @@ const SISV_STATUSES = [
 const SISV_SERVICE_TYPES = [
   { code: 'REABILITACAO',       label: 'Reabilitação de CNH (CRCI)', color: '#16a34a', sort_order: 1 },
   { code: 'RENOVACAO',          label: 'Renovação de CNH',           color: '#0ea5e9', sort_order: 2 },
-  { code: 'PRIMEIRA_HAB',       label: 'Primeira Habilitação',       color: '#6366f1', sort_order: 3 },
-  { code: 'ADICAO_CATEGORIA',   label: 'Adição de Categoria',        color: '#8b5cf6', sort_order: 4 },
-  { code: 'MUDANCA_CATEGORIA',  label: 'Mudança de Categoria',       color: '#a855f7', sort_order: 5 },
+  { code: 'PRIMEIRA_HAB',       label: 'Primeira Habilitação',       color: '#3B1F6A', sort_order: 3 },
+  { code: 'ADICAO_CATEGORIA',   label: 'Adição de Categoria',        color: '#A56FFF', sort_order: 4 },
+  { code: 'MUDANCA_CATEGORIA',  label: 'Mudança de Categoria',       color: '#FF6A3D', sort_order: 5 },
   { code: 'RECURSO_SUSPENSAO',  label: 'Recurso de Suspensão',       color: '#f59e0b', sort_order: 6 },
   { code: 'RECURSO_CASSACAO',   label: 'Recurso de Cassação',        color: '#ef4444', sort_order: 7 },
   { code: 'DEFESA_AUTUACAO',    label: 'Defesa de Autuação',         color: '#eab308', sort_order: 8 },
@@ -64,8 +64,8 @@ const SISV_SERVICE_TYPES = [
 // Setores/departamentos.
 const SISV_DEPARTMENTS = [
   { name: 'Atendimento',   color: '#0ea5e9', sort_order: 1 },
-  { name: 'Jurídico',      color: '#8b5cf6', sort_order: 2 },
-  { name: 'Protocolo',     color: '#f59e0b', sort_order: 3 },
+  { name: 'Jurídico',      color: '#A56FFF', sort_order: 2 },
+  { name: 'Protocolo',     color: '#FF6A3D', sort_order: 3 },
   { name: 'Administrativo', color: '#64748b', sort_order: 4 },
 ];
 
@@ -73,10 +73,10 @@ const SISV_DEPARTMENTS = [
 const SISV_DOCUMENT_CATEGORIES = [
   { name: 'Documento pessoal',      color: '#0ea5e9', sort_order: 1 },
   { name: 'CNH',                    color: '#16a34a', sort_order: 2 },
-  { name: 'Procuração',             color: '#8b5cf6', sort_order: 3 },
+  { name: 'Procuração',             color: '#A56FFF', sort_order: 3 },
   { name: 'Comprovante',            color: '#14b8a6', sort_order: 4 },
-  { name: 'Requerimento',           color: '#6366f1', sort_order: 5 },
-  { name: 'Defesa',                 color: '#a855f7', sort_order: 6 },
+  { name: 'Requerimento',           color: '#3B1F6A', sort_order: 5 },
+  { name: 'Defesa',                 color: '#A56FFF', sort_order: 6 },
   { name: 'Recurso',                color: '#f59e0b', sort_order: 7 },
   { name: 'Protocolo',              color: '#eab308', sort_order: 8 },
   { name: 'Decisão',                color: '#ef4444', sort_order: 9 },
@@ -98,40 +98,40 @@ async function seedSisvCatalogs(pool, tenantId) {
   for (const s of SISV_STAGES) {
     await pool.query(
       `INSERT INTO process_stages (tenant_id, code, label, color, sort_order, is_final)
-       SELECT $1,$2,$3,$4,$5::int,$6::boolean
-       WHERE NOT EXISTS (SELECT 1 FROM process_stages WHERE tenant_id=$1 AND LOWER(code)=LOWER($2))`,
+       SELECT $1,$2::text,$3,$4,$5::int,$6::boolean
+       WHERE NOT EXISTS (SELECT 1 FROM process_stages WHERE tenant_id=$1 AND LOWER(code)=LOWER($2::text))`,
       [tenantId, s.code, s.label, s.color, s.sort_order, s.is_final]
     );
   }
   for (const s of SISV_STATUSES) {
     await pool.query(
       `INSERT INTO process_statuses (tenant_id, code, label, color, sort_order, is_pending)
-       SELECT $1,$2,$3,$4,$5::int,$6::boolean
-       WHERE NOT EXISTS (SELECT 1 FROM process_statuses WHERE tenant_id=$1 AND LOWER(code)=LOWER($2))`,
+       SELECT $1,$2::text,$3,$4,$5::int,$6::boolean
+       WHERE NOT EXISTS (SELECT 1 FROM process_statuses WHERE tenant_id=$1 AND LOWER(code)=LOWER($2::text))`,
       [tenantId, s.code, s.label, s.color, s.sort_order, s.is_pending]
     );
   }
   for (const s of SISV_SERVICE_TYPES) {
     await pool.query(
       `INSERT INTO tenant_service_types (tenant_id, code, label, color, sort_order)
-       SELECT $1,$2,$3,$4,$5::int
-       WHERE NOT EXISTS (SELECT 1 FROM tenant_service_types WHERE tenant_id=$1 AND LOWER(code)=LOWER($2))`,
+       SELECT $1,$2::text,$3,$4,$5::int
+       WHERE NOT EXISTS (SELECT 1 FROM tenant_service_types WHERE tenant_id=$1 AND LOWER(code)=LOWER($2::text))`,
       [tenantId, s.code, s.label, s.color, s.sort_order]
     );
   }
   for (const d of SISV_DEPARTMENTS) {
     await pool.query(
       `INSERT INTO departments (tenant_id, name, color, sort_order)
-       SELECT $1,$2,$3,$4::int
-       WHERE NOT EXISTS (SELECT 1 FROM departments WHERE tenant_id=$1 AND LOWER(name)=LOWER($2))`,
+       SELECT $1,$2::text,$3,$4::int
+       WHERE NOT EXISTS (SELECT 1 FROM departments WHERE tenant_id=$1 AND LOWER(name)=LOWER($2::text))`,
       [tenantId, d.name, d.color, d.sort_order]
     );
   }
   for (const c of SISV_DOCUMENT_CATEGORIES) {
     await pool.query(
       `INSERT INTO document_categories (tenant_id, name, color, sort_order)
-       SELECT $1,$2,$3,$4::int
-       WHERE NOT EXISTS (SELECT 1 FROM document_categories WHERE tenant_id=$1 AND LOWER(name)=LOWER($2))`,
+       SELECT $1,$2::text,$3,$4::int
+       WHERE NOT EXISTS (SELECT 1 FROM document_categories WHERE tenant_id=$1 AND LOWER(name)=LOWER($2::text))`,
       [tenantId, c.name, c.color, c.sort_order]
     );
   }

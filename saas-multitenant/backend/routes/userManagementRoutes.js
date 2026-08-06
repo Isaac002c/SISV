@@ -1,260 +1,404 @@
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const permissionModel = require('../models/permissionModels');
-const { checkPermission, requireAdminOrManager, getAllRoles } = require('../middlewares/checkPermission');
+const { checkPermission, requireAdmin, getAllRoles } = require('../middlewares/checkPermission');
 const saasModel = require('../models/saasModels');
+const pool = require('../config/db');
+const {
+  USER_MODULES,
+  ACCESS_PROFILES,
+  normalizeModules,
+  getProfile,
+} = require('../config/accessControl');
 
-// GET /api/users/management - Listar usuários do tenant
+const USER_LIMIT_ERROR = 'USER_LIMIT_REACHED';
+const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
+
+const isUserLimitError = (err) => [err?.message, err?.detail]
+  .some((value) => String(value || '').includes(USER_LIMIT_ERROR));
+
+const capacityError = (capacity) => ({
+  success: false,
+  code: USER_LIMIT_ERROR,
+  error: `O limite de ${capacity.limit} usuários ativos foi atingido. Desative um usuário antes de criar ou reativar outro.`,
+  capacity,
+});
+
+const fail = (res, err) => {
+  console.error('[users-management]', err?.message || err);
+  if (isUserLimitError(err)) {
+    return res.status(409).json({
+      success: false,
+      code: USER_LIMIT_ERROR,
+      error: 'O limite de usuários ativos foi atingido. Desative um usuário antes de criar ou reativar outro.',
+    });
+  }
+  return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
+};
+
+const validateDepartment = async (tenantId, departmentId) => {
+  if (!departmentId) return true;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM departments WHERE id=$1 AND tenant_id=$2 AND active=TRUE',
+    [departmentId, tenantId]
+  );
+  return Boolean(rows[0]);
+};
+
+const resolveAccess = ({ access_profile, module_access, backoffice_level }, { required = false } = {}) => {
+  if (!access_profile && !required) return null;
+
+  const profile = getProfile(access_profile || 'sales');
+  if (!profile) {
+    const error = new Error('Perfil de acesso inválido.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (profile.key !== 'custom') {
+    return {
+      role: profile.role,
+      access_profile: profile.key,
+      module_access: [...profile.modules],
+      backoffice_level: profile.backofficeLevel,
+    };
+  }
+
+  const modules = normalizeModules(module_access);
+  if (!modules || modules.length === 0) {
+    const error = new Error('Selecione ao menos um módulo para o perfil personalizado.');
+    error.status = 400;
+    throw error;
+  }
+
+  let level = Number(backoffice_level || 0);
+  if (!Number.isInteger(level) || level < 0 || level > 2) {
+    const error = new Error('Nível de Back Office inválido.');
+    error.status = 400;
+    throw error;
+  }
+  if (!modules.includes('backoffice')) level = 0;
+
+  return {
+    role: 'operator',
+    access_profile: 'custom',
+    module_access: modules,
+    backoffice_level: level,
+  };
+};
+
 router.get('/', checkPermission('users:read'), async (req, res) => {
   try {
-    const tenantId = req.tenantId;
-    const users = await permissionModel.getUsersWithRoles(tenantId);
+    const users = await permissionModel.getUsersWithRoles(req.tenantId);
     res.json({ success: true, data: users });
   } catch (err) {
-    console.error('Erro ao buscar usuários:', err);
-    res.status(500).json({ success: false, error: err.message });
+    fail(res, err);
   }
 });
 
-// GET /api/users/management/stats - Estatísticas de usuários
 router.get('/stats', checkPermission('users:read'), async (req, res) => {
   try {
-    const tenantId = req.tenantId;
-    const [stats, total] = await Promise.all([
-      permissionModel.getUsersStats(tenantId),
-      permissionModel.countUsers(tenantId)
+    const [stats, capacity] = await Promise.all([
+      permissionModel.getUsersStats(req.tenantId),
+      permissionModel.getTenantUserCapacity(req.tenantId),
     ]);
-    res.json({ success: true, data: { stats, total } });
+    res.json({ success: true, data: { stats, ...capacity } });
   } catch (err) {
-    console.error('Erro ao buscar stats:', err);
-    res.status(500).json({ success: false, error: err.message });
+    fail(res, err);
   }
 });
 
-// GET /api/users/management/roles - Listar roles disponíveis
-router.get('/roles', async (req, res) => {
-  try {
-    const roles = getAllRoles();
-    const permissionsMap = {
-      admin: 'Acesso total ao sistema',
-      manager: 'Gerenciamento de clientes, contratos e documentos',
-      operator: 'Operação básica: criar e editar',
-      viewer: 'Apenas visualização'
-    };
-    
-    const rolesWithDesc = roles.map(role => ({
-      name: role,
-      description: permissionsMap[role] || ''
-    }));
-    
-    res.json({ success: true, data: rolesWithDesc });
-  } catch (err) {
-    console.error('Erro ao buscar roles:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
+router.get('/access-options', checkPermission('users:read'), (_req, res) => {
+  res.json({
+    success: true,
+    data: {
+      modules: USER_MODULES.map(({ permissionPrefixes, ...module }) => module),
+      profiles: ACCESS_PROFILES,
+      max_backoffice_level: 2,
+    },
+  });
 });
 
-// GET /api/users/management/:id - Buscar usuário por ID
+// Rota legada mantida para clientes antigos.
+router.get('/roles', checkPermission('users:read'), (_req, res) => {
+  const descriptions = {
+    admin: 'Acesso total ao sistema',
+    manager: 'Gestão da operação, distribuição e produtividade',
+    operator: 'Operação de processos, documentos e pendências',
+    seller: 'Operação de processos e sua fila de trabalho',
+    viewer: 'Apenas visualização',
+    front_office: 'Vendas e atendimento comercial',
+    back_office: 'Conferência e operação de Back Office',
+    sales_backoffice: 'Vendas e Back Office de primeiro nível',
+    finance: 'Rotinas financeiras e pagamentos',
+    operations: 'Execução operacional',
+  };
+  res.json({
+    success: true,
+    data: getAllRoles().map((name) => ({ name, description: descriptions[name] || '' })),
+  });
+});
+
 router.get('/:id', checkPermission('users:read'), async (req, res) => {
   try {
-    const { id } = req.params;
-    const tenantId = req.tenantId;
-    
-    const user = await permissionModel.getUserById(id, tenantId);
-    
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'Usuário não encontrado' });
-    }
-    
-    res.json({ success: true, data: user });
+    const user = await permissionModel.getUserById(req.params.id, req.tenantId);
+    if (!user) return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+    return res.json({ success: true, data: user });
   } catch (err) {
-    console.error('Erro ao buscar usuário:', err);
-    res.status(500).json({ success: false, error: err.message });
+    return fail(res, err);
   }
 });
 
-// POST /api/users/management - Criar novo usuário
-router.post('/', requireAdminOrManager, async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   try {
-    const { name, email, password, role = 'viewer' } = req.body;
-    const tenantId = req.tenantId;
-    
-    if (!name || !email || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Nome, email e senha são obrigatórios' 
-      });
+    const {
+      name, username, phone = null, password, department_id = null,
+      access_profile = 'sales', module_access, backoffice_level,
+    } = req.body;
+
+    if (!name || !username || !password) {
+      return res.status(400).json({ success: false, error: 'Nome, usuário de acesso e senha são obrigatórios.' });
     }
-    
-    // Verificar se email já existe
-    const emailExists = await permissionModel.checkEmailExists(email, tenantId);
-    if (emailExists) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Email já está em uso' 
-      });
+    if (!USERNAME_PATTERN.test(String(username).trim())) {
+      return res.status(400).json({ success: false, error: 'O usuário deve usar apenas letras, números, ponto, hífen ou sublinhado.' });
     }
-    
+    if (password.length < 10) {
+      return res.status(400).json({ success: false, error: 'A senha deve ter ao menos 10 caracteres.' });
+    }
+    if (phone && String(phone).trim().length > 30) {
+      return res.status(400).json({ success: false, error: 'Telefone inválido.' });
+    }
+    if (!(await validateDepartment(req.tenantId, department_id))) {
+      return res.status(400).json({ success: false, error: 'Setor inválido.' });
+    }
+
+    const capacity = await permissionModel.getTenantUserCapacity(req.tenantId);
+    if (capacity.limit !== null && capacity.active >= capacity.limit) {
+      return res.status(409).json(capacityError(capacity));
+    }
+    const access = resolveAccess({ access_profile, module_access, backoffice_level }, { required: true });
+
+    if (await permissionModel.checkUsernameExists(username, req.tenantId)) {
+      return res.status(409).json({ success: false, error: 'Usuário de acesso já está em uso.' });
+    }
+    const resolvedEmail = `${String(username).trim().toLowerCase()}@login.sisv.local`;
+
     const user = await permissionModel.createUser({
-      tenant_id: tenantId,
-      name,
-      email,
+      tenant_id: req.tenantId,
+      name: String(name).trim(),
+      username: String(username).trim(),
+      email: resolvedEmail,
+      phone: phone ? String(phone).trim() : null,
       password,
-      role
+      ...access,
+      department_id: department_id || null,
     });
-    
-    // Log de atividade
+
     await saasModel.createActivityLog({
-      tenant_id: tenantId,
+      tenant_id: req.tenantId,
       user_id: req.userId,
       action: 'create',
       entity_type: 'user',
       entity_id: user.id,
-      description: `Usuário ${name} (${role}) criado`,
-      metadata: { user_email: email }
+      description: `Usuário ${user.name} (${access.access_profile}) criado`,
+      metadata: {
+        username: user.username,
+        access_profile: access.access_profile,
+        modules: access.module_access,
+      },
     });
-    
-    res.status(201).json({ success: true, data: user });
+
+    return res.status(201).json({ success: true, data: user });
   } catch (err) {
-    console.error('Erro ao criar usuário:', err);
-    res.status(500).json({ success: false, error: err.message });
+    if (err?.status === 400) return res.status(400).json({ success: false, error: err.message });
+    return fail(res, err);
   }
 });
 
-// PUT /api/users/management/:id - Atualizar usuário
 router.put('/:id', checkPermission('users:update'), async (req, res) => {
   try {
-    const { id } = req.params;
-    const { name, email, role, is_active } = req.body;
-    const tenantId = req.tenantId;
-    
-    // Usuário só pode ser atualizado por admin/manager ou pelo próprio usuário
+    const {
+      name, username, phone, role, is_active, department_id,
+      access_profile, module_access, backoffice_level,
+    } = req.body;
     const currentUserRole = req.userRole;
-    if (currentUserRole !== 'admin' && currentUserRole !== 'manager' && req.userId !== id) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Você só pode atualizar seu próprio perfil' 
-      });
+
+    if (currentUserRole !== 'admin' && currentUserRole !== 'manager' && req.userId !== req.params.id) {
+      return res.status(403).json({ success: false, error: 'Você só pode atualizar seu próprio perfil.' });
     }
-    
-    // Verificar se o usuário pertence ao tenant
-    const existingUser = await permissionModel.getUserById(id, tenantId);
-    if (!existingUser) {
-      return res.status(404).json({ success: false, error: 'Usuário não encontrado' });
+
+    const existingUser = await permissionModel.getUserById(req.params.id, req.tenantId);
+    if (!existingUser) return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+
+    if (role !== undefined && (!getAllRoles().includes(role) || role === 'super_admin')) {
+      return res.status(400).json({ success: false, error: 'Perfil inválido.' });
     }
-    
-    // Se não for admin, não pode mudar role de outros usuários
-    if (currentUserRole !== 'admin' && req.userId !== id && role) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Você não pode alterar a função de outros usuários' 
-      });
+    if (username !== undefined && !USERNAME_PATTERN.test(String(username).trim())) {
+      return res.status(400).json({ success: false, error: 'O usuário deve usar apenas letras, números, ponto, hífen ou sublinhado.' });
     }
-    
-    const user = await permissionModel.updateUser(id, {
+    if (phone && String(phone).trim().length > 30) {
+      return res.status(400).json({ success: false, error: 'Telefone inválido.' });
+    }
+    if (currentUserRole === 'manager') {
+      if (existingUser.role === 'admin') {
+        return res.status(403).json({ success: false, error: 'Gestores não podem editar administradores.' });
+      }
+      if (role && role !== existingUser.role && (role === 'admin' || role === 'manager' || req.userId === req.params.id)) {
+        return res.status(403).json({ success: false, error: 'Gestores não podem atribuir esse perfil ou alterar o próprio perfil.' });
+      }
+    }
+    if (!(await validateDepartment(req.tenantId, department_id))) {
+      return res.status(400).json({ success: false, error: 'Setor inválido.' });
+    }
+    if (username && username.toLowerCase() !== String(existingUser.username || '').toLowerCase()
+        && await permissionModel.checkUsernameExists(username, req.tenantId, req.params.id)) {
+      return res.status(409).json({ success: false, error: 'Usuário de acesso já está em uso.' });
+    }
+    if (is_active === false && existingUser.is_active !== false) {
+      return res.status(400).json({ success: false, error: 'Use a ação de desativação para validar a carga de trabalho.' });
+    }
+    if (is_active === true && existingUser.is_active === false && currentUserRole !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Somente administrador pode reativar usuários.' });
+    }
+    if (is_active === true && existingUser.is_active === false) {
+      const capacity = await permissionModel.getTenantUserCapacity(req.tenantId);
+      if (capacity.limit !== null && capacity.active >= capacity.limit) {
+        return res.status(409).json(capacityError(capacity));
+      }
+    }
+
+    const access = resolveAccess(
+      { access_profile, module_access, backoffice_level },
+      { required: false }
+    );
+    const user = await permissionModel.updateUser(req.params.id, {
       name,
-      email,
-      role,
-      is_active
-    }, tenantId);
-    
-    // Log de atividade
+      username: username === undefined ? undefined : String(username).trim(),
+      email: username === undefined
+        ? undefined
+        : `${String(username).trim().toLowerCase()}@login.sisv.local`,
+      phone: phone === undefined ? undefined : (phone ? String(phone).trim() : null),
+      role: access?.role ?? role,
+      is_active,
+      department_id,
+      access_profile: access?.access_profile,
+      module_access: access?.module_access,
+      backoffice_level: access?.backoffice_level,
+    }, req.tenantId);
+
     await saasModel.createActivityLog({
-      tenant_id: tenantId,
+      tenant_id: req.tenantId,
       user_id: req.userId,
       action: 'update',
       entity_type: 'user',
-      entity_id: id,
-      description: `Usuário ${name || existingUser.name} atualizado`,
-      metadata: { changes: { name, email, role, is_active } }
+      entity_id: req.params.id,
+      description: `Usuário ${user?.name || existingUser.name} atualizado`,
+      metadata: {
+        changes: {
+          name, username, phone, role: access?.role ?? role, is_active, department_id,
+          access_profile: access?.access_profile,
+          module_access: access?.module_access,
+          backoffice_level: access?.backoffice_level,
+        },
+      },
     });
-    
-    res.json({ success: true, data: user });
+
+    return res.json({ success: true, data: user });
   } catch (err) {
-    console.error('Erro ao atualizar usuário:', err);
-    res.status(500).json({ success: false, error: err.message });
+    if (err?.status === 400) return res.status(400).json({ success: false, error: err.message });
+    return fail(res, err);
   }
 });
 
-// PATCH /api/users/management/:id/password - Alterar senha
 router.patch('/:id/password', async (req, res) => {
   try {
-    const { id } = req.params;
     const { password } = req.body;
-    const tenantId = req.tenantId;
-    
-    if (!password) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Senha é obrigatória' 
-      });
+    if (!password || password.length < 10) {
+      return res.status(400).json({ success: false, error: 'A senha deve ter ao menos 10 caracteres.' });
     }
-    
-    // Usuário só pode alterar senha do próprio usuário ou admin
-    if (req.userRole !== 'admin' && req.userId !== id) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Você só pode alterar sua própria senha' 
-      });
+    if (req.userRole !== 'admin' && req.userId !== req.params.id) {
+      return res.status(403).json({ success: false, error: 'Você só pode alterar sua própria senha.' });
     }
-    
-    await permissionModel.updateUserPassword(id, password, tenantId);
-    
-    // Log de atividade
+    await permissionModel.updateUserPassword(req.params.id, password, req.tenantId);
     await saasModel.createActivityLog({
-      tenant_id: tenantId,
+      tenant_id: req.tenantId,
       user_id: req.userId,
       action: 'update_password',
       entity_type: 'user',
-      entity_id: id,
-      description: 'Senha atualizada'
+      entity_id: req.params.id,
+      description: 'Senha atualizada',
     });
-    
-    res.json({ success: true, message: 'Senha atualizada com sucesso' });
+    return res.json({ success: true, message: 'Senha atualizada com sucesso.' });
   } catch (err) {
-    console.error('Erro ao alterar senha:', err);
-    res.status(500).json({ success: false, error: err.message });
+    return fail(res, err);
   }
 });
 
-// DELETE /api/users/management/:id - Deletar usuário
-router.delete('/:id', requireAdminOrManager, async (req, res) => {
+router.get('/:id/workload', checkPermission('users:read'), async (req, res) => {
   try {
-    const { id } = req.params;
-    const tenantId = req.tenantId;
-    
-    // Não pode deletar a si mesmo
-    if (req.userId === id) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Você não pode excluir seu próprio usuário' 
-      });
-    }
-    
-    // Verificar se o usuário pertence ao tenant
-    const existingUser = await permissionModel.getUserById(id, tenantId);
-    if (!existingUser) {
-      return res.status(404).json({ success: false, error: 'Usuário não encontrado' });
-    }
-    
-    await permissionModel.deleteUser(id, tenantId);
-    
-    // Log de atividade
-    await saasModel.createActivityLog({
-      tenant_id: tenantId,
-      user_id: req.userId,
-      action: 'delete',
-      entity_type: 'user',
-      entity_id: id,
-      description: `Usuário ${existingUser.name} excluído`
-    });
-    
-    res.json({ success: true, message: 'Usuário deletado com sucesso' });
+    const user = await permissionModel.getUserById(req.params.id, req.tenantId);
+    if (!user) return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+    return res.json({ success: true, data: await permissionModel.getUserWorkload(req.params.id, req.tenantId) });
   } catch (err) {
-    console.error('Erro ao deletar usuário:', err);
-    res.status(500).json({ success: false, error: err.message });
+    return fail(res, err);
+  }
+});
+
+router.post('/:id/deactivate', requireAdmin, async (req, res) => {
+  try {
+    if (req.userId === req.params.id) {
+      return res.status(400).json({ success: false, error: 'Você não pode desativar seu próprio usuário.' });
+    }
+    const result = await permissionModel.deactivateUser(req.params.id, req.tenantId, {
+      redistribute_to: req.body?.redistribute_to || null,
+    });
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ success: false, error: result.error, workload: result.workload });
+    }
+    await saasModel.createActivityLog({
+      tenant_id: req.tenantId,
+      user_id: req.userId,
+      action: 'user_deactivated',
+      entity_type: 'usuario',
+      entity_id: req.params.id,
+      entity_name: result.user.name,
+      description: 'Usuário desativado',
+      metadata: { workload: result.workload, redistributed_to: result.redistributed_to },
+    });
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+router.delete('/:id', requireAdmin, async (req, res) => {
+  try {
+    if (req.userId === req.params.id) {
+      return res.status(400).json({ success: false, error: 'Você não pode excluir seu próprio usuário.' });
+    }
+    const result = await permissionModel.softDeleteUser(req.params.id, req.tenantId);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ success: false, error: result.error });
+    }
+    await saasModel.createActivityLog({
+      tenant_id: req.tenantId,
+      user_id: req.userId,
+      action: 'user_deleted',
+      entity_type: 'usuario',
+      entity_id: req.params.id,
+      entity_name: result.user.name,
+      description: 'Usuário excluído',
+      metadata: {
+        preserved_history: true,
+        username: result.original.username,
+      },
+    });
+    return res.json({ success: true, message: 'Usuário excluído com sucesso.', data: result.user });
+  } catch (err) {
+    return fail(res, err);
   }
 });
 
 module.exports = router;
-

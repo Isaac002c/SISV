@@ -18,6 +18,7 @@ import {
 import { uploadFile } from '../lib/uploadsAPI';
 import DocumentsManager from './DocumentsManager';
 import { fmtDate } from '../lib/format';
+import { getClientFields } from '../lib/clientsAPI';
 
 
 function Badge({ label, color }) {
@@ -33,6 +34,7 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [docBusy, setDocBusy] = useState(false);
+  const [fieldDefinitions, setFieldDefinitions] = useState([]);
 
   const isAdmin = (() => {
     try { const u = JSON.parse(localStorage.getItem('user') || 'null'); return u?.role === 'admin' || u?.role === 'manager'; }
@@ -44,12 +46,14 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
   const load = useCallback(async () => {
     try {
       setLoading(true); setError(null);
-      const [procRes, docList] = await Promise.all([
+      const [procRes, docList, definitions] = await Promise.all([
         listProcesses({ client_id: client.id, limit: 100 }),
         getDocumentsByClient(client.id).catch(() => []),
+        getClientFields().catch(() => []),
       ]);
       setProcesses(procRes.rows || []);
       setDocs(Array.isArray(docList) ? docList : []);
+      setFieldDefinitions(definitions || []);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }, [client.id]);
@@ -86,7 +90,7 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
         {tabs.map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13.5, fontWeight: 600,
-            color: tab === k ? '#15803d' : '#94a3b8', borderBottom: `2px solid ${tab === k ? '#15803d' : 'transparent'}`, marginBottom: -1,
+            color: tab === k ? 'var(--primary)' : 'var(--text-muted)', borderBottom: `2px solid ${tab === k ? 'var(--primary)' : 'transparent'}`, marginBottom: -1,
           }}>{l}</button>
         ))}
       </div>
@@ -99,6 +103,11 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
           <Row label="Telefone">{client.phone || '—'}</Row>
           <Row label="E-mail">{client.email || '—'}</Row>
           <Row label="Endereço">{client.address || '—'}</Row>
+          {fieldDefinitions.filter((field) => field.storage_kind === 'custom').map((field) => (
+            <Row key={field.id} label={field.label}>
+              {String(client.additional_data?.[field.field_key] ?? '—')}
+            </Row>
+          ))}
           <Row label="Situação dos processos">{processes.length === 0 ? 'Nenhum processo' : `${openCount} em aberto de ${processes.length}`}</Row>
           <Row label="Cadastrado em">{fmtDate(client.created_at)}</Row>
           {client.notes && (

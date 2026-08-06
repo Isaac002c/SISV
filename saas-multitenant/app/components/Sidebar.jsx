@@ -1,8 +1,14 @@
 'use client';
 
-import { useState } from 'react';
-import Image from 'next/image';
-import { APP_BRAND, DEVELOPED_BY, isModuleEnabled, getTenantModules } from '../lib/brand';
+import {
+  APP_BRAND,
+  DEVELOPED_BY,
+  getTenantModules,
+  getUserModules,
+  hasAnyUserModule,
+  isModuleEnabled,
+} from '../lib/brand';
+import { SisvLockup, TelunAsset, TelunSignature } from './TelunBrand';
 
 const Icons = {
   Dashboard: () => (
@@ -157,6 +163,46 @@ const Icons = {
       <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
     </svg>
   ),
+  Cart: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+      <path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/>
+    </svg>
+  ),
+  Inbox: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
+      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+    </svg>
+  ),
+  Truck: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+      <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+    </svg>
+  ),
+  Tag: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+      <line x1="7" y1="7" x2="7.01" y2="7"/>
+    </svg>
+  ),
+  Handshake: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12l4-4 4 4 2-2 4 4 4-4"/><path d="M6 16l3 3 3-3 3 3 3-3"/>
+    </svg>
+  ),
+  Percent: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>
+    </svg>
+  ),
+  Contract: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/><path d="M8 17c1.5-2 3-2 4 0s2.5 2 4 0"/>
+    </svg>
+  ),
 };
 
 // =============================================================================
@@ -173,18 +219,45 @@ const sidebarConfig = {
       // `explicit: true` = item novo do SISV; só aparece se o tenant listar o
       // módulo explicitamente (modules=null/legado NÃO mostra, preservando os
       // demais tenants). Itens sem `explicit` seguem a regra legada (null = tudo).
-      { key: 'dashboard',     label: 'Dashboard',    Icon: Icons.Dashboard, tab: 'dashboard',     module: 'dashboard', roles: ['admin'] },
-      { key: 'processos',     label: 'Processos',    Icon: Icons.Layers,    tab: 'processos',     module: 'processos', explicit: true },
-      { key: 'clients',       label: 'Clientes',     Icon: Icons.Clients,   tab: 'clients',       module: 'clientes' },
+      { key: 'dashboard',     label: 'Dashboard',    Icon: Icons.Dashboard, tab: 'dashboard', module: 'dashboard', roles: ['admin'], group: 'Início' },
+
+      // ── Atendimento (front office) — SISV 2.0 §43 ──────────────────────────
+      { key: 'clients',       label: 'Clientes',     Icon: Icons.Clients, tab: 'clients', module: 'clientes', group: 'Atendimento' },
+      { key: 'pedidos',       label: 'Pedidos',      Icon: Icons.Cart, tab: 'pedidos', module: 'processos', explicit: true, group: 'Atendimento' },
+      { key: 'documentos',    label: 'Documentos e contratos', Icon: Icons.Contract, tab: 'documentos-comerciais', module: 'processos', explicit: true, group: 'Atendimento' },
+
+      // ── Back office ───────────────────────────────────────────────────────
+      { key: 'backoffice',    label: 'Validação',    Icon: Icons.Inbox, tab: 'backoffice', module: 'processos', explicit: true, roles: ['admin', 'manager', 'back_office', 'sales_backoffice', 'finance'], group: 'Back Office' },
+      { key: 'vendas',        label: 'Vendas',       Icon: Icons.Tag, tab: 'vendas', module: 'processos', explicit: true, roles: ['admin', 'manager', 'front_office', 'back_office', 'sales_backoffice', 'finance'], group: 'Back Office' },
+      { key: 'ordens',        label: 'Ordens de serviço', Icon: Icons.Truck, tab: 'execucao', module: 'processos', explicit: true, group: 'Back Office' },
+
+      // ── Operação ──────────────────────────────────────────────────────────
+      { key: 'meu-trabalho',  label: 'Meu Trabalho', Icon: Icons.Tasks, tab: 'meu-trabalho', module: 'processos', explicit: true, group: 'Operação' },
+      { key: 'execucao',      label: 'Execução',     Icon: Icons.Truck, tab: 'execucao', module: 'processos', explicit: true, group: 'Operação' },
+      { key: 'processos',     label: 'Processos',    Icon: Icons.Layers, tab: 'processos', module: 'processos', explicit: true, group: 'Operação' },
+      { key: 'atencao',       label: 'Central de Atenção', Icon: Icons.Shield, tab: 'atencao', module: 'processos', explicit: true, roles: ['admin', 'manager'], group: 'Operação' },
+
+      // ── Financeiro operacional ────────────────────────────────────────────
+      { key: 'financeiro-op', label: 'Recebimentos e pagamentos', Icon: Icons.Wallet, tab: 'financeiro-operacional', module: 'processos', explicit: true, roles: ['admin', 'manager', 'finance', 'back_office', 'sales_backoffice'], group: 'Financeiro operacional' },
+      { key: 'fornecedores',  label: 'Fornecedores e parceiros', Icon: Icons.Handshake, tab: 'fornecedores', module: 'processos', explicit: true, group: 'Financeiro operacional' },
+      { key: 'comissoes',     label: 'Comissões',    Icon: Icons.Percent, tab: 'comissoes', module: 'processos', explicit: true, roles: ['admin', 'manager', 'finance'], group: 'Financeiro operacional' },
+
       { key: 'companies',     label: 'Empresas',     Icon: Icons.Building,  tab: 'companies',     module: 'empresas' },
       { key: 'deferidos',     label: 'Deferidos',    Icon: Icons.Award,     tab: 'deferidos',     module: 'deferidos' },
       { key: 'leads',         label: 'Leads',        Icon: Icons.Target,    tab: 'leads',         module: 'leads' },
       { key: 'tarefas',       label: 'Tarefas',      Icon: Icons.Tasks,     tab: 'tarefas',       module: 'tarefas' },
       { key: 'calendario',    label: 'Prazos',       Icon: Icons.Calendar,  tab: 'calendario',    module: 'agenda' },
       { key: 'eventos',       label: 'Agenda',       Icon: Icons.CalEvent,  tab: 'eventos',       module: 'agenda' },
-      { key: 'history',       label: 'Histórico',    Icon: Icons.Clock,     tab: 'history',       module: 'historico', roles: ['admin'] },
-      { key: 'users',         label: 'Usuários',     Icon: Icons.Clients,   tab: 'users',         module: 'usuarios', explicit: true, roles: ['admin'] },
-      { key: 'configuracoes', label: 'Configurações', Icon: Icons.Settings, tab: 'configuracoes', module: 'config', explicit: true, roles: ['admin'] },
+      { key: 'history',       label: 'Histórico',    Icon: Icons.Clock, tab: 'history', module: 'historico', roles: ['admin'], group: 'Gestão' },
+      { key: 'relatorios',    label: 'Relatórios',   Icon: Icons.BarChart, tab: 'relatorios', module: 'processos', explicit: true, roles: ['admin', 'manager', 'finance'], group: 'Gestão' },
+      { key: 'qualidade',     label: 'Qualidade',    Icon: Icons.Shield, tab: 'qualidade', module: 'processos', explicit: true, roles: ['admin', 'manager'], group: 'Gestão' },
+      { key: 'auditoria',     label: 'Auditoria',    Icon: Icons.Clock, tab: 'auditoria', module: 'processos', explicit: true, roles: ['admin', 'manager'], group: 'Gestão' },
+
+      // ── Cadastros ─────────────────────────────────────────────────────────
+      { key: 'catalogo',      label: 'Serviços e preços', Icon: Icons.Tag, tab: 'catalogo', module: 'processos', explicit: true, roles: ['admin', 'manager'], group: 'Cadastros' },
+
+      { key: 'users',         label: 'Usuários',     Icon: Icons.Clients, tab: 'users', module: 'usuarios', explicit: true, roles: ['admin'], group: 'Configurações' },
+      { key: 'configuracoes', label: 'Configurações', Icon: Icons.Settings, tab: 'configuracoes', module: 'config', explicit: true, roles: ['admin'], group: 'Configurações' },
       { key: 'approvals',     label: 'Aprovações',   Icon: Icons.Approvals, tab: 'approvals',     module: 'aprovacoes', roles: ['admin'] },
     ],
   },
@@ -207,6 +280,30 @@ const modules = [
   { key: 'financeiro', label: 'Financeiro', module: 'financeiro', roles: ['admin'] },
 ];
 
+const USER_ACCESS_BY_TAB = {
+  clients: ['sales', 'backoffice', 'payments', 'operations'],
+  pedidos: ['sales', 'backoffice'],
+  'documentos-comerciais': ['sales', 'backoffice'],
+  backoffice: ['backoffice'],
+  vendas: ['sales', 'backoffice'],
+  execucao: ['operations'],
+  processos: ['backoffice', 'operations'],
+  'meu-trabalho': ['backoffice', 'operations'],
+  atencao: ['backoffice', 'operations'],
+  'financeiro-operacional': ['payments'],
+  fornecedores: ['payments'],
+  comissoes: ['payments'],
+  relatorios: ['sales', 'backoffice', 'payments', 'operations'],
+  qualidade: ['backoffice', 'operations'],
+  auditoria: ['backoffice', 'operations'],
+  catalogo: ['sales'],
+  companies: ['sales'],
+  leads: ['sales'],
+  tarefas: ['backoffice', 'operations'],
+  calendario: ['backoffice', 'operations'],
+  eventos: ['backoffice', 'operations'],
+};
+
 // Sem branding fixo de clientes: a identidade vem dos dados do tenant (logo_url,
 // brand_color, tagline). Quando ausente, usa o padrão institucional (SISV).
 const TENANT_DEFAULTS = {};
@@ -225,6 +322,15 @@ function TenantLogo({ collapsed, tenant }) {
   const tagline = tenant?.tagline  || defaults.tagline || NEXOS_TAGLINE;
   const brandColor = tenant?.brand_color || defaults.brand_color || NEXOS_BRAND;
   const initial = name.charAt(0).toUpperCase();
+  const isSisv = slug === 'sisv';
+
+  if (isSisv) {
+    return (
+      <div className={`sidebar-logo telun-sidebar-logo${collapsed ? ' is-collapsed' : ''}`}>
+        {collapsed ? <TelunAsset compact /> : <SisvLockup />}
+      </div>
+    );
+  }
 
   // CR Recursos: a logo é um lockup completo (símbolo + nome "CR RECURSOS /
   // ASSESSORIA DE TRÂNSITO" em branco, vazado). Por isso exibimos SOMENTE a logo,
@@ -296,6 +402,7 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
   const moduleKey = sidebarConfig[currentModule] ? currentModule : 'multas';
   const config   = sidebarConfig[moduleKey];
   const userRole = user?.role || 'seller';
+  const userModules = getUserModules(user);
   const tenantSlug = tenant?.slug || deriveSlug(tenant?.name) || 'default';
   const tenantModules = getTenantModules(tenant); // null = todos habilitados
   const restricted = Array.isArray(tenantModules); // tenant com módulos explícitos (ex.: SISV)
@@ -315,6 +422,7 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
       if (!(restricted && item.key === 'dashboard')) return false;
     }
     if (!itemEnabled(item)) return false;
+    if (userRole !== 'admin' && !hasAnyUserModule(userModules, USER_ACCESS_BY_TAB[item.tab])) return false;
     // CR Recursos: consultor (não-admin) não vê "Prazos" (tab calendario). Só este tenant.
     if (tenantSlug === 'cr-recursos' && userRole !== 'admin' && item.tab === 'calendario') return false;
     return true;
@@ -323,8 +431,21 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
   const visibleModules = modules.filter(m => {
     if (m.roles && !m.roles.includes(userRole)) return false;
     if (m.module && !isModuleEnabled(tenantModules, m.module)) return false;
+    if (m.key === 'financeiro' && userRole !== 'admin' && !hasAnyUserModule(userModules, ['payments'])) return false;
     return true;
   });
+  // Ordem dos grupos conforme a arquitetura de navegação do SISV 2.0 (§43).
+  // Um item pode repetir em dois grupos (ex.: Execução em Back Office e
+  // Operação); a chave do React usa grupo+item para não colidir.
+  const GROUP_ORDER = [
+    'Início', 'Atendimento', 'Back Office', 'Operação',
+    'Financeiro operacional', 'Gestão', 'Cadastros', 'Configurações',
+  ];
+  const visibleGroups = restricted
+    ? GROUP_ORDER
+      .map((label) => ({ label, items: visibleItems.filter((item) => (item.group || 'Operação') === label) }))
+      .filter((group) => group.items.length)
+    : [{ label: config.label, items: visibleItems }];
 
   const classes = [
     'sidebar',
@@ -357,22 +478,26 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
       <div className="sidebar-divider" />
 
       <nav className="sidebar-nav" aria-label="Navegação principal">
-        {!collapsed && <span className="sidebar-section-label">{config.label}</span>}
-        {visibleItems.map(item => {
-          const isActive = currentTab === item.tab;
-          return (
-            <button
-              key={item.key}
-              className={`sidebar-item${isActive ? ' active' : ''}`}
-              onClick={() => onNavigate(moduleKey, item.tab)}
-              title={collapsed ? item.label : undefined}
-              aria-current={isActive ? 'page' : undefined}
-            >
-              <span className="sidebar-item-icon"><item.Icon /></span>
-              {!collapsed && <span className="sidebar-item-label">{item.label}</span>}
-            </button>
-          );
-        })}
+        {visibleGroups.map((group) => (
+          <div className="sidebar-nav-group" key={group.label}>
+            {!collapsed && <span className="sidebar-section-label">{group.label}</span>}
+            {group.items.map(item => {
+              const isActive = currentTab === item.tab;
+              return (
+                <button
+                  key={`${group.label}-${item.key}`}
+                  className={`sidebar-item${isActive ? ' active' : ''}`}
+                  onClick={() => onNavigate(moduleKey, item.tab)}
+                  title={collapsed ? item.label : undefined}
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  <span className="sidebar-item-icon"><item.Icon /></span>
+                  {!collapsed && <span className="sidebar-item-label">{item.label}</span>}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Ajustes gerais (assinatura/atividades). Oculto em tenants restritos
@@ -400,9 +525,13 @@ export default function Sidebar({ currentModule, currentTab, onNavigate, collaps
             <a href={`mailto:${APP_BRAND.supportEmail}`} className="sidebar-footer-email">
               {APP_BRAND.supportEmail}
             </a>
-            <span className="sidebar-footer-label" style={{ marginTop: 8, opacity: 0.7, fontSize: 11 }}>
-              {DEVELOPED_BY}
-            </span>
+            {restricted ? (
+              <TelunSignature wording="developed" className="sidebar-telun-signature" />
+            ) : (
+              <span className="sidebar-footer-label" style={{ marginTop: 8, opacity: 0.7, fontSize: 11 }}>
+                {DEVELOPED_BY}
+              </span>
+            )}
           </div>
         )}
         <button

@@ -10,15 +10,16 @@ const toStrOrNull = (value) => (value === '' || value === undefined ? null : val
 
 // CREATE - Criar novo cliente
 const createClient = async ({
-  tenant_id, name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status
+  tenant_id, name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status,
+  additional_data
 }) => {
   if (!tenant_id) {
     throw new Error('tenant_id é obrigatório para criar um cliente');
   }
 
   const result = await pool.query(
-    `INSERT INTO clients(tenant_id, name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status)
-     VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    `INSERT INTO clients(tenant_id, name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status, additional_data)
+     VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING *`,
     [
       tenant_id,
       name,
@@ -31,6 +32,7 @@ const createClient = async ({
       toStrOrNull(address),
       toStrOrNull(notes),
       status || 'negociacao',
+      JSON.stringify(additional_data || {}),
     ]
   );
 
@@ -39,12 +41,14 @@ const createClient = async ({
 
 // READ - Listar todos os clientes do tenant
 // LIMIT 500: proteção de performance; se ultrapassar esse volume, implementar paginação real
-const getAllClients = async (tenant_id) => {
+const getAllClients = async (tenant_id, { archived = false } = {}) => {
   const result = await pool.query(
-    `SELECT id, tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, email, status, created_at
+    `SELECT id, tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, email, address, notes, additional_data,
+            status, created_at, updated_at, deleted_at, deleted_by, delete_reason
      FROM clients
      WHERE tenant_id = $1
-     ORDER BY name ASC
+       AND ${archived ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL'}
+     ORDER BY ${archived ? 'deleted_at DESC, name ASC' : 'name ASC'}
      LIMIT 500`,
     [tenant_id]
   );
@@ -52,9 +56,11 @@ const getAllClients = async (tenant_id) => {
 };
 
 // READ - Buscar cliente por ID
-const getClientById = async (id, tenant_id) => {
+const getClientById = async (id, tenant_id, { includeDeleted = false } = {}) => {
   const result = await pool.query(
-    'SELECT * FROM clients WHERE id = $1 AND tenant_id = $2',
+    `SELECT * FROM clients
+     WHERE id = $1 AND tenant_id = $2
+       ${includeDeleted ? '' : 'AND deleted_at IS NULL'}`,
     [id, tenant_id]
   );
   return result.rows[0];
@@ -63,7 +69,7 @@ const getClientById = async (id, tenant_id) => {
 // READ - Buscar cliente por CPF
 const getClientByCPF = async (cpf, tenant_id) => {
   const result = await pool.query(
-    'SELECT * FROM clients WHERE cpf = $1 AND tenant_id = $2',
+    'SELECT * FROM clients WHERE cpf = $1 AND tenant_id = $2 AND deleted_at IS NULL',
     [cpf, tenant_id]
   );
   return result.rows[0];
@@ -72,9 +78,11 @@ const getClientByCPF = async (cpf, tenant_id) => {
 // READ - Pesquisar clientes
 const searchClients = async (tenant_id, searchTerm) => {
   const result = await pool.query(
-    `SELECT id, tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, email, status, created_at
+    `SELECT id, tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, email, address, notes,
+            additional_data, status, created_at
      FROM clients
      WHERE tenant_id = $1
+       AND deleted_at IS NULL
        AND (name ILIKE $2 OR cpf ILIKE $2 OR cnh ILIKE $2 OR phone ILIKE $2)
      ORDER BY name ASC
      LIMIT 50`,
@@ -86,41 +94,66 @@ const searchClients = async (tenant_id, searchTerm) => {
 // READ - Contar clientes
 const countClients = async (tenant_id) => {
   const result = await pool.query(
-    'SELECT COUNT(*) as total FROM clients WHERE tenant_id = $1',
+    'SELECT COUNT(*) as total FROM clients WHERE tenant_id = $1 AND deleted_at IS NULL',
     [tenant_id]
   );
   return result.rows[0].total;
 };
 
 // UPDATE - Atualizar cliente
-const updateClient = async (id, { name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status }, tenant_id) => {
+const updateClient = async (id, {
+  name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status, additional_data,
+}, tenant_id) => {
+  const hasAdditionalData = additional_data !== undefined;
+  const baseValues = [
+    name,
+    toDateOrNull(birth_date),
+    toStrOrNull(cpf),
+    toStrOrNull(cnh),
+    toDateOrNull(first_cnh),
+    toStrOrNull(phone),
+    toStrOrNull(email),
+    toStrOrNull(address),
+    toStrOrNull(notes),
+    status || 'negociacao',
+  ];
   const result = await pool.query(
     `UPDATE clients
      SET name = $1, birth_date = $2, cpf = $3, cnh = $4, first_cnh = $5,
-         phone = $6, email = $7, address = $8, notes = $9, status = $10, updated_at = NOW()
-     WHERE id = $11 AND tenant_id = $12 RETURNING *`,
-    [
-      name,
-      toDateOrNull(birth_date),
-      toStrOrNull(cpf),
-      toStrOrNull(cnh),
-      toDateOrNull(first_cnh),
-      toStrOrNull(phone),
-      toStrOrNull(email),
-      toStrOrNull(address),
-      toStrOrNull(notes),
-      status || 'negociacao',
-      id,
-      tenant_id,
-    ]
+         phone = $6, email = $7, address = $8, notes = $9, status = $10,
+         ${hasAdditionalData
+    ? "additional_data = COALESCE(additional_data, '{}'::jsonb) || $11::jsonb,"
+    : ''}
+         updated_at = NOW()
+     WHERE id = $${hasAdditionalData ? 12 : 11}
+       AND tenant_id = $${hasAdditionalData ? 13 : 12}
+       AND deleted_at IS NULL RETURNING *`,
+    hasAdditionalData
+      ? [...baseValues, JSON.stringify(additional_data || {}), id, tenant_id]
+      : [...baseValues, id, tenant_id]
   );
   return result.rows[0];
 };
 
-// DELETE - Deletar cliente
-const deleteClient = async (id, tenant_id) => {
+// DELETE lógico - preserva pedidos, documentos e histórico ligados ao cliente.
+const deleteClient = async (id, tenant_id, deleted_by = null, reason = null) => {
   const result = await pool.query(
-    'DELETE FROM clients WHERE id = $1 AND tenant_id = $2 RETURNING *',
+    `UPDATE clients
+     SET deleted_at = NOW(), deleted_by = $3, delete_reason = $4, updated_at = NOW()
+     WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+     RETURNING *`,
+    [id, tenant_id, deleted_by || null, toStrOrNull(reason)]
+  );
+  return result.rows[0];
+};
+
+// RESTORE - Reativa um cliente arquivado sem alterar seus vínculos históricos.
+const restoreClient = async (id, tenant_id) => {
+  const result = await pool.query(
+    `UPDATE clients
+     SET deleted_at = NULL, deleted_by = NULL, delete_reason = NULL, updated_at = NOW()
+     WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
+     RETURNING *`,
     [id, tenant_id]
   );
   return result.rows[0];
@@ -141,7 +174,7 @@ const ensureClientFromLead = async (lead, tenant_id) => {
 
   // 1) idempotência por vínculo direto
   const byLead = await pool.query(
-    'SELECT id FROM clients WHERE lead_id = $1 AND tenant_id = $2 LIMIT 1',
+    'SELECT id FROM clients WHERE lead_id = $1 AND tenant_id = $2 AND deleted_at IS NULL LIMIT 1',
     [lead.id, tenant_id]
   );
   if (byLead.rows[0]) return { created: false, reason: 'already_linked', id: byLead.rows[0].id };
@@ -152,6 +185,7 @@ const ensureClientFromLead = async (lead, tenant_id) => {
     const byCpf = await pool.query(
       `SELECT id FROM clients
          WHERE tenant_id = $1
+           AND deleted_at IS NULL
            AND regexp_replace(COALESCE(cpf, ''), '\\D', '', 'g') = $2
          LIMIT 1`,
       [tenant_id, cpf]
@@ -204,5 +238,6 @@ module.exports = {
   countClients,
   updateClient,
   deleteClient,
+  restoreClient,
   ensureClientFromLead,
 };

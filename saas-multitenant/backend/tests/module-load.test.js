@@ -39,7 +39,7 @@ test('middleware e rotas financeiras carregam', () => {
   assert.ok(require('../routes/financial/summaryRoutes'));
 });
 
-test('branding: usa identidade do tenant quando existe; senão Nexo', () => {
+test('branding: usa identidade do tenant quando existe; senão SISV/TELUN', () => {
   const { resolveBranding } = require('../services/finance/branding');
   const own = resolveBranding({ tenant: { name: 'Empresa Exemplo', logo_url: '/logos/x.png' } });
   assert.equal(own.name, 'Empresa Exemplo');
@@ -47,7 +47,7 @@ test('branding: usa identidade do tenant quando existe; senão Nexo', () => {
   assert.equal(own.signature, null); // não força assinatura padrão sobre marca própria do tenant
 
   const def = resolveBranding({ tenant: null, settings: null });
-  assert.equal(def.name, 'Nexos');
+  assert.equal(def.name, 'SISV');
   assert.equal(def.is_default, true);
-  assert.equal(def.signature, 'by Nexos');
+  assert.equal(def.signature, 'Uma solução TELUN');
 });

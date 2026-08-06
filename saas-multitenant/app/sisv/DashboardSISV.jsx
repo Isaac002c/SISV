@@ -110,7 +110,7 @@ function DistList({ rows, total, onClick }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
       {list.map((r, i) => {
         const count = Number(r.count) || 0;
-        const c = r.color || '#15803d';
+        const c = r.color || 'var(--chart-1)';
         return (
           <div key={i}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 3 }}>

@@ -1,11 +1,16 @@
 {
-  "name": "nexos-backend",
+  "name": "sisv-backend",
   "version": "1.0.0",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "node app.js",
-    "test": "node --test"
+    "test": "node --test \"tests/**/*.test.js\"",
+    "test:postgres": "node scripts/postgres-test-harness.js",
+    "worker": "node workers/internalWorker.js",
+    "worker:once": "node workers/internalWorker.js --once",
+    "perf:sisv": "node scripts/sisv-performance-smoke.js",
+    "perf:governance": "node scripts/governance-performance.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

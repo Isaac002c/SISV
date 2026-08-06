@@ -33,3 +33,17 @@ logs/
 
 # Cobertura de testes
 coverage/
+
+# Artefatos locais do Playwright e inspeção de traces
+test-results/
+playwright-report/
+trace-inspect-*/
+
+# Cluster PostgreSQL local e descartavel usado por npm run test:postgres
+backend/.postgres-test/
+
+.vercel
+
+# Artefatos gerados (render intermediario e PDFs de manual) — nao versionar
+tmp/
+output/

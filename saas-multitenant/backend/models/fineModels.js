@@ -12,8 +12,9 @@ const createFine = async ({
   tenant_id, client_id, fine_number, plate, organ, infraction_type,
   vehicle_model, infraction_date, due_date, defense_date, stage, status,
   value, cost, paid_value, seller_id, notes,
-  department_id, tenant_service_type_id, service_type_id, protocol_number
-}) => {
+  department_id, tenant_service_type_id, service_type_id, protocol_number,
+  custom_data
+}, db = pool) => {
   if (!tenant_id) {
     throw new Error('tenant_id é obrigatório para criar um processo');
   }
@@ -21,7 +22,7 @@ const createFine = async ({
     throw new Error('client_id é obrigatório para criar um processo');
   }
 
-  const result = await pool.query(
+  const result = await db.query(
     `INSERT INTO fines(
       tenant_id, client_id, fine_number, plate, organ, infraction_type,
       vehicle_model, infraction_date, due_date, defense_date, stage, status,
@@ -39,7 +40,16 @@ const createFine = async ({
     ]
   );
 
-  return result.rows[0];
+  const created = result.rows[0];
+  if (custom_data !== undefined) {
+    const custom = await db.query(
+      `UPDATE fines SET custom_data = $1::jsonb
+       WHERE id = $2 AND tenant_id = $3 RETURNING *`,
+      [JSON.stringify(custom_data || {}), created.id, tenant_id]
+    );
+    return custom.rows[0];
+  }
+  return created;
 };
 
 // READ - Listar todas as multas do tenant
@@ -464,7 +474,7 @@ const getProcessById = async (id, tenant_id) => {
             st.label as service_type_label, st.code as service_type_code
      FROM fines f
      LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
-     LEFT JOIN users u ON f.seller_id = u.id
+     LEFT JOIN users u ON f.seller_id = u.id AND u.tenant_id = f.tenant_id
      LEFT JOIN departments d ON f.department_id = d.id AND d.tenant_id = f.tenant_id
      LEFT JOIN tenant_service_types st ON f.tenant_service_type_id = st.id AND st.tenant_id = f.tenant_id
      WHERE f.id = $1 AND f.tenant_id = $2`,
@@ -501,8 +511,38 @@ const buildProcessWhere = (tenant_id, filters = {}) => {
   // Sem movimentação há N dias (usa last_moved_at, com fallback para updated_at).
   // Cutoff calculado em JS para portabilidade (evita cast dinâmico de intervalo).
   if (filters.stale_days) {
-    const cutoff = new Date(Date.now() - Number(filters.stale_days) * 86400000).toISOString();
+    const days = Math.min(Math.max(Number(filters.stale_days) || 0, 1), 3650);
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
     add('COALESCE(f.last_moved_at, f.updated_at) < $$', cutoff);
+  }
+
+  // Faixas padrao de aging. Os limites configuraveis sao expostos pela Central;
+  // a fila tambem aceita min/max explicitos vindos desses cards.
+  const defaultAgingRanges = {
+    ate_2: [0, 2],
+    '3_a_5': [3, 5],
+    '6_a_10': [6, 10],
+    acima_10: [11, null],
+  };
+  let agingRange = defaultAgingRanges[filters.aging];
+  if (!agingRange && typeof filters.aging === 'string') {
+    const until = /^ate_(\d{1,3})$/.exec(filters.aging);
+    const between = /^(\d{1,3})_a_(\d{1,3})$/.exec(filters.aging);
+    const above = /^acima_(\d{1,3})$/.exec(filters.aging);
+    if (until && Number(until[1]) >= 1) agingRange = [0, Number(until[1])];
+    if (between && Number(between[1]) >= 1 && Number(between[1]) <= Number(between[2])) {
+      agingRange = [Number(between[1]), Number(between[2])];
+    }
+    if (above && Number(above[1]) >= 1) agingRange = [Number(above[1]) + 1, null];
+  }
+  if (agingRange) {
+    const [min, max] = agingRange;
+    if (max !== null) {
+      add('COALESCE(f.last_moved_at, f.updated_at) >= $$', new Date(Date.now() - (max + 1) * 86400000).toISOString());
+    }
+    if (min > 0) {
+      add('COALESCE(f.last_moved_at, f.updated_at) < $$', new Date(Date.now() - min * 86400000).toISOString());
+    }
   }
 
   // Prazos (due_date): vencidos e vencendo em N dias — só processos em aberto.
@@ -511,11 +551,31 @@ const buildProcessWhere = (tenant_id, filters = {}) => {
     clauses.push('f.finalized_at IS NULL AND f.due_date IS NOT NULL');
     add('f.due_date < $$', todayISO);
   }
-  if (filters.due_soon === true || filters.due_soon === 'true') {
-    const soonISO = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  if (filters.due_soon && filters.due_soon !== 'false') {
+    const requestedDays = filters.due_soon === true || filters.due_soon === 'true'
+      ? 7
+      : Number(filters.due_soon);
+    const dueSoonDays = Math.min(Math.max(Number.isInteger(requestedDays) ? requestedDays : 7, 1), 90);
+    const soonISO = new Date(Date.now() + dueSoonDays * 86400000).toISOString().slice(0, 10);
     clauses.push('f.finalized_at IS NULL AND f.due_date IS NOT NULL');
     add('f.due_date >= $$', todayISO);
     add('f.due_date <= $$', soonISO);
+  }
+  if (filters.due_today === true || filters.due_today === 'true') {
+    clauses.push('f.finalized_at IS NULL AND f.due_date IS NOT NULL');
+    add('f.due_date = $$', todayISO);
+  }
+  if (filters.missing_documents === true || filters.missing_documents === 'true') {
+    clauses.push(`EXISTS (
+      SELECT 1 FROM service_type_documents std
+      LEFT JOIN fine_documents mfd
+        ON mfd.tenant_id = f.tenant_id AND mfd.fine_id = f.id
+       AND mfd.category_id = std.category_id
+       AND COALESCE(mfd.status, 'ativo') = 'ativo' AND mfd.removed_at IS NULL
+      WHERE std.tenant_id = f.tenant_id
+        AND std.tenant_service_type_id = f.tenant_service_type_id
+        AND std.required = TRUE AND mfd.id IS NULL
+    )`);
   }
   if (filters.due_from) add('f.due_date >= $$', filters.due_from);
   if (filters.due_to)   add('f.due_date <= $$', filters.due_to);
@@ -527,6 +587,7 @@ const buildProcessWhere = (tenant_id, filters = {}) => {
     clauses.push(`(
       c.name ILIKE $${i} OR c.cpf ILIKE $${i} OR c.cnh ILIKE $${i}
       OR f.fine_number ILIKE $${i} OR f.protocol_number ILIKE $${i} OR f.plate ILIKE $${i}
+      OR st.label ILIKE $${i} OR u.name ILIKE $${i}
     )`);
     params.push(`%${filters.q}%`);
     i++;
@@ -556,7 +617,7 @@ const listProcesses = async (tenant_id, filters = {}) => {
   // JOINs em derived tables/catálogos (portável; sem subqueries correlacionadas).
   const joins = `
     LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
-    LEFT JOIN users u ON f.seller_id = u.id
+    LEFT JOIN users u ON f.seller_id = u.id AND u.tenant_id = f.tenant_id
     LEFT JOIN departments d ON f.department_id = d.id AND d.tenant_id = f.tenant_id
     LEFT JOIN tenant_service_types st ON f.tenant_service_type_id = st.id AND st.tenant_id = f.tenant_id
     LEFT JOIN process_statuses ps ON ps.tenant_id = f.tenant_id AND ps.code = f.status
@@ -580,6 +641,8 @@ const listProcesses = async (tenant_id, filters = {}) => {
     SELECT COUNT(*)::int AS total
     FROM fines f
     LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
+    LEFT JOIN users u ON f.seller_id = u.id AND u.tenant_id = f.tenant_id
+    LEFT JOIN tenant_service_types st ON f.tenant_service_type_id = st.id AND st.tenant_id = f.tenant_id
     LEFT JOIN process_statuses ps ON ps.tenant_id = f.tenant_id AND ps.code = f.status
     WHERE ${where}`;
 
@@ -588,7 +651,14 @@ const listProcesses = async (tenant_id, filters = {}) => {
     pool.query(countQuery, params),
   ]);
 
-  return { rows: rowsRes.rows, total: countRes.rows[0].total, limit, offset };
+  const now = Date.now();
+  const rows = rowsRes.rows.map((row) => {
+    const moved = new Date(row.last_moved_at || row.updated_at).getTime();
+    const agingDays = Number.isFinite(moved) ? Math.max(0, Math.floor((now - moved) / 86400000)) : 0;
+    const agingBucket = agingDays <= 2 ? 'ate_2' : agingDays <= 5 ? '3_a_5' : agingDays <= 10 ? '6_a_10' : 'acima_10';
+    return { ...row, aging_days: agingDays, aging_bucket: agingBucket };
+  });
+  return { rows, total: countRes.rows[0].total, limit, offset };
 };
 
 // UPDATE - Movimenta etapa marcando a última movimentação.
@@ -702,7 +772,7 @@ const getProcessDashboard = async (tenant_id) => {
     ),
     pool.query(
       `SELECT u.name AS seller_name, f.seller_id, COUNT(*)::int AS count
-       FROM fines f LEFT JOIN users u ON f.seller_id = u.id
+       FROM fines f LEFT JOIN users u ON f.seller_id = u.id AND u.tenant_id = f.tenant_id
        WHERE f.tenant_id = $1 AND f.finalized_at IS NULL
        GROUP BY f.seller_id, u.name ORDER BY count DESC`,
       [tenant_id]
@@ -719,7 +789,7 @@ const getProcessDashboard = async (tenant_id) => {
               c.name AS client_name, u.name AS seller_name
        FROM fines f
        LEFT JOIN clients c ON f.client_id = c.id AND c.tenant_id = f.tenant_id
-       LEFT JOIN users u ON f.seller_id = u.id
+       LEFT JOIN users u ON f.seller_id = u.id AND u.tenant_id = f.tenant_id
        WHERE f.tenant_id = $1
        ORDER BY COALESCE(f.last_moved_at, f.updated_at) DESC LIMIT 8`,
       [tenant_id]
@@ -769,7 +839,7 @@ const batchAssign = async (tenant_id, ids, { changeSeller, seller_id, changeDept
       const cur = await client.query(
         `SELECT f.id, f.seller_id, f.department_id, u.name AS seller_name, d.name AS department_name
          FROM fines f
-         LEFT JOIN users u ON f.seller_id = u.id
+         LEFT JOIN users u ON f.seller_id = u.id AND u.tenant_id = f.tenant_id
          LEFT JOIN departments d ON f.department_id = d.id AND d.tenant_id = f.tenant_id
          WHERE f.id = $1 AND f.tenant_id = $2`, [id, tenant_id]);
       const row = cur.rows[0];
@@ -778,7 +848,7 @@ const batchAssign = async (tenant_id, ids, { changeSeller, seller_id, changeDept
       let touched = false;
       if (changeSeller && (row.seller_id || null) !== (seller_id || null)) {
         await client.query('UPDATE fines SET seller_id = $1, last_moved_at = NOW(), updated_at = NOW() WHERE id = $2 AND tenant_id = $3', [seller_id || null, id, tenant_id]);
-        rec.seller = { old: row.seller_name, new: newSellerName }; touched = true;
+        rec.seller = { old: row.seller_name, new: newSellerName, id: seller_id || null }; touched = true;
       }
       if (changeDept && (row.department_id || null) !== (department_id || null)) {
         await client.query('UPDATE fines SET department_id = $1, last_moved_at = NOW(), updated_at = NOW() WHERE id = $2 AND tenant_id = $3', [department_id || null, id, tenant_id]);

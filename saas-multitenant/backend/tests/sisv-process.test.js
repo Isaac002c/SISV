@@ -30,7 +30,16 @@ before(async () => {
     CREATE TABLE departments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL, name TEXT, color TEXT, sort_order INT DEFAULT 0, active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
     CREATE TABLE process_stages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL, code TEXT, label TEXT, color TEXT, sort_order INT DEFAULT 0, is_final BOOLEAN DEFAULT FALSE, active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
     CREATE TABLE process_statuses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL, code TEXT, label TEXT, color TEXT, sort_order INT DEFAULT 0, is_pending BOOLEAN DEFAULT FALSE, active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
-    CREATE TABLE tenant_service_types (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL, code TEXT, label TEXT, color TEXT, sort_order INT DEFAULT 0, active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE tenant_service_types (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+      code TEXT, label TEXT, color TEXT, sort_order INT DEFAULT 0,
+      description TEXT, initial_stage TEXT, initial_status TEXT,
+      default_due_days INT, initial_department_id UUID,
+      suggested_tasks JSONB DEFAULT '[]'::jsonb,
+      custom_fields JSONB DEFAULT '[]'::jsonb,
+      active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
     CREATE TABLE fines (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL, client_id UUID,
       company_id UUID, vehicle_id UUID, service_type_id INT, seller_id UUID,
@@ -213,6 +222,24 @@ test('prazos: processo FINALIZADO com prazo vencido NÃO entra em vencidos', asy
   await fineModels.reopenProcess(p.id, {}, T);
   const overdue2 = await fineModels.listProcesses(T, { overdue: 'true' });
   assert.ok(overdue2.rows.some((r) => r.fine_number === 'SV-FIN-VENC'), 'reaberto volta a ser vencido');
+});
+
+test('aging: aceita faixas configuráveis sem interpolar parâmetros arbitrários', async () => {
+  const process = await fineModels.createFine({
+    tenant_id: T,
+    client_id: cliId,
+    fine_number: 'SV-AGING-20',
+    stage: 'ENTRADA',
+    status: 'PENDENTE',
+  });
+  await pool.query(
+    `UPDATE fines SET last_moved_at = NOW() - INTERVAL '20 days' WHERE id = $1 AND tenant_id = $2`,
+    [process.id, T]
+  );
+  const custom = await fineModels.listProcesses(T, { aging: 'acima_14' });
+  assert.ok(custom.rows.some((row) => row.id === process.id));
+  const invalid = await fineModels.listProcesses(T, { aging: 'acima_14;DROP_TABLE' });
+  assert.equal(invalid.total >= custom.total, true, 'valor inválido é ignorado e nunca vira SQL');
 });
 
 test('dashboard operacional agrega totais e catálogos', async () => {

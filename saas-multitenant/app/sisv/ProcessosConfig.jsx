@@ -9,8 +9,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { PageHead, EmptyState, SkeletonRows } from '../components/ui';
 import { departments, stages, statuses, serviceTypes, documentCategories, getChecklist, setChecklist } from '../lib/tenantConfigAPI';
+import { getOperationSettings, updateOperationSettings } from '../lib/operationsAPI';
 
-const COLORS = ['#15803d', '#0ea5e9', '#6366f1', '#8b5cf6', '#f59e0b', '#ef4444', '#14b8a6', '#64748b'];
+const COLORS = ['#A56FFF', '#FF6A3D', '#FFD8A6', '#3B1F6A', '#0ea5e9', '#16a34a', '#ef4444', '#64748b'];
 
 export default function ProcessosConfig() {
   const [tab, setTab] = useState('stages');
@@ -21,6 +22,7 @@ export default function ProcessosConfig() {
     ['departments', 'Setores', departments, { nameOnly: true }],
     ['doccats', 'Categorias de documento', documentCategories, { nameOnly: true }],
     ['checklist', 'Checklist por serviço', null, {}],
+    ['operations', 'Regras operacionais', null, {}],
   ];
   const current = tabs.find((t) => t[0] === tab);
 
@@ -31,14 +33,15 @@ export default function ProcessosConfig() {
         {tabs.map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             padding: '9px 14px', border: 'none', background: 'none', cursor: 'pointer',
-            fontSize: 14, fontWeight: 600, color: tab === k ? '#15803d' : '#94a3b8',
-            borderBottom: `2px solid ${tab === k ? '#15803d' : 'transparent'}`, marginBottom: -1,
+            fontSize: 14, fontWeight: 600, color: tab === k ? 'var(--primary)' : 'var(--text-muted)',
+            borderBottom: `2px solid ${tab === k ? 'var(--primary)' : 'transparent'}`, marginBottom: -1,
           }}>{l}</button>
         ))}
       </div>
-      {tab === 'checklist'
-        ? <ChecklistConfig />
-        : <CatalogEditor key={tab} api={current[2]} options={current[3]} labelSingular={current[1]} />}
+      {tab === 'checklist' ? <ChecklistConfig />
+        : tab === 'operations' ? <OperationSettings />
+          : tab === 'services' ? <><CatalogEditor key={tab} api={current[2]} options={current[3]} labelSingular={current[1]} /><ServiceTemplateEditor /></>
+            : <CatalogEditor key={tab} api={current[2]} options={current[3]} labelSingular={current[1]} />}
     </div>
   );
 }
@@ -117,6 +120,113 @@ function ChecklistConfig() {
         <button className="btn-primary" disabled={saving} onClick={save}>{saving ? 'Salvando...' : 'Salvar checklist'}</button>
         {msg && <span style={{ color: '#16a34a', fontSize: 13 }}>{msg}</span>}
       </div>
+    </div>
+  );
+}
+
+function ServiceTemplateEditor() {
+  const [servicesList, setServicesList] = useState([]);
+  const [catalogs, setCatalogs] = useState({ stages: [], statuses: [], departments: [] });
+  const [id, setId] = useState('');
+  const [form, setForm] = useState({});
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    const [items, stageList, statusList, departmentList] = await Promise.all([
+      serviceTypes.list(true), stages.list(), statuses.list(), departments.list(),
+    ]);
+    setServicesList(items || []);
+    setCatalogs({ stages: stageList || [], statuses: statusList || [], departments: departmentList || [] });
+    const selected = items.find((item) => item.id === id) || items[0];
+    if (selected) { setId(selected.id); setForm(toTemplateForm(selected)); }
+  }, [id]);
+  useEffect(() => { load().catch((err) => setError(err.message)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const select = (nextId) => {
+    setId(nextId);
+    setForm(toTemplateForm(servicesList.find((item) => item.id === nextId) || {}));
+  };
+  const save = async () => {
+    try {
+      setError(''); setMessage('');
+      const suggested_tasks = form.tasks_text.split('\n').map((line) => line.trim()).filter(Boolean).map((title) => ({ title, priority: 'normal', due_days: null }));
+      const custom_fields = form.fields_text.split('\n').map((line, index) => {
+        const [name, type = 'texto_curto', required = '', options = ''] = line.split('|').map((part) => part.trim());
+        return { name, key: slugKey(name), type, required: /^(sim|true|1)$/i.test(required), options: options ? options.split(',').map((item) => item.trim()).filter(Boolean) : [], order: index, active: true };
+      }).filter((field) => field.name);
+      await serviceTypes.update(id, {
+        description: form.description || null,
+        initial_stage: form.initial_stage || null,
+        initial_status: form.initial_status || null,
+        default_due_days: form.default_due_days === '' ? null : Number(form.default_due_days),
+        initial_department_id: form.initial_department_id || null,
+        suggested_tasks,
+        custom_fields,
+      });
+      setMessage('Template operacional salvo.');
+      await load();
+    } catch (err) { setError(err.message); }
+  };
+  if (!servicesList.length) return null;
+  return (
+    <section style={{ maxWidth: 720, marginTop: 28, borderTop: '1px solid #e2e8f0', paddingTop: 20 }}>
+      <h3 style={{ fontSize: 16 }}>Modelo operacional do serviço</h3>
+      <p style={{ fontSize: 12.5, color: '#64748b' }}>Os valores são sugestões ajustáveis no cadastro do processo.</p>
+      {error && <div className="error-message">{error}</div>}
+      <div className="form-group"><label>Tipo de serviço</label><select value={id} onChange={(event) => select(event.target.value)}>{servicesList.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div>
+      <div className="form-group"><label>Descrição</label><textarea rows={2} value={form.description || ''} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div>
+      <div className="form-row">
+        <div className="form-group"><label>Etapa inicial</label><select value={form.initial_stage || ''} onChange={(event) => setForm({ ...form, initial_stage: event.target.value })}><option value="">Sem sugestão</option>{catalogs.stages.map((item) => <option key={item.id} value={item.code}>{item.label}</option>)}</select></div>
+        <div className="form-group"><label>Status inicial</label><select value={form.initial_status || ''} onChange={(event) => setForm({ ...form, initial_status: event.target.value })}><option value="">Sem sugestão</option>{catalogs.statuses.map((item) => <option key={item.id} value={item.code}>{item.label}</option>)}</select></div>
+      </div>
+      <div className="form-row">
+        <div className="form-group"><label>Prazo padrão (dias)</label><input type="number" min="0" max="3650" value={form.default_due_days ?? ''} onChange={(event) => setForm({ ...form, default_due_days: event.target.value })} /></div>
+        <div className="form-group"><label>Setor inicial</label><select value={form.initial_department_id || ''} onChange={(event) => setForm({ ...form, initial_department_id: event.target.value })}><option value="">Sem sugestão</option>{catalogs.departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
+      </div>
+      <div className="form-group"><label>Pendências sugeridas (uma por linha)</label><textarea rows={4} value={form.tasks_text || ''} onChange={(event) => setForm({ ...form, tasks_text: event.target.value })} /></div>
+      <div className="form-group"><label>Campos complementares</label><textarea rows={4} value={form.fields_text || ''} onChange={(event) => setForm({ ...form, fields_text: event.target.value })} placeholder="Nome | texto_curto | sim&#10;Categoria | selecao | não | A,B,C" /><small>Tipos: texto_curto, texto_longo, numero, data, selecao, booleano.</small></div>
+      <button className="btn-primary" onClick={save}>Salvar template</button>
+      {message && <span style={{ marginLeft: 10, color: 'var(--success)', fontSize: 13 }}>{message}</span>}
+    </section>
+  );
+}
+
+const toTemplateForm = (item) => ({
+  description: item.description || '',
+  initial_stage: item.initial_stage || '',
+  initial_status: item.initial_status || '',
+  default_due_days: item.default_due_days ?? '',
+  initial_department_id: item.initial_department_id || '',
+  tasks_text: (item.suggested_tasks || []).map((task) => task.title).join('\n'),
+  fields_text: (item.custom_fields || []).map((field) => `${field.name} | ${field.type} | ${field.required ? 'sim' : 'não'} | ${(field.options || []).join(',')}`).join('\n'),
+});
+const slugKey = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
+function OperationSettings() {
+  const [form, setForm] = useState(null);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => { getOperationSettings().then(setForm).catch((err) => setError(err.message)); }, []);
+  if (!form) return error ? <div className="error-message">{error}</div> : <SkeletonRows rows={4} />;
+  const save = async () => {
+    try {
+      const data = await updateOperationSettings({
+        stale_after_days: Number(form.stale_after_days),
+        due_soon_days: Number(form.due_soon_days),
+        aging_bands: String(form.aging_bands).split(',').map(Number),
+        department_required: Boolean(form.department_required),
+      });
+      setForm({ ...data, aging_bands: data.aging_bands.join(',') });
+      setMessage('Regras salvas.');
+    } catch (err) { setError(err.message); }
+  };
+  return (
+    <div style={{ maxWidth: 560 }}>
+      {error && <div className="error-message">{error}</div>}
+      <div className="form-group"><label>Considerar sem movimentação após (dias)</label><input type="number" min="1" max="365" value={form.stale_after_days} onChange={(event) => setForm({ ...form, stale_after_days: event.target.value })} /></div>
+      <div className="form-group"><label>Janela de prazo próximo (dias)</label><input type="number" min="1" max="90" value={form.due_soon_days} onChange={(event) => setForm({ ...form, due_soon_days: event.target.value })} /></div>
+      <div className="form-group"><label>Limites das faixas de aging</label><input value={Array.isArray(form.aging_bands) ? form.aging_bands.join(',') : form.aging_bands} onChange={(event) => setForm({ ...form, aging_bands: event.target.value })} placeholder="2,5,10" /></div>
+      <label style={{ display: 'flex', gap: 8, margin: '12px 0' }}><input type="checkbox" checked={Boolean(form.department_required)} onChange={(event) => setForm({ ...form, department_required: event.target.checked })} />Setor obrigatório para a operação</label>
+      <button className="btn-primary" onClick={save}>Salvar regras</button>{message && <span style={{ marginLeft: 10, color: 'var(--success)' }}>{message}</span>}
     </div>
   );
 }

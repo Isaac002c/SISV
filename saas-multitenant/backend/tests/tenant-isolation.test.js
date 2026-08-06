@@ -14,7 +14,7 @@ const { randomUUID } = require('node:crypto');
 const Module = require('node:module');
 const { newDb, DataType } = require('pg-mem');
 
-let clientModels, fineModels;
+let clientModels, fineModels, pool;
 const A = 'tenant-A';
 const B = 'tenant-B';
 let cliA, cliB, fineA, fineB;
@@ -36,7 +36,8 @@ before(async () => {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       tenant_id TEXT NOT NULL, name TEXT, birth_date DATE, cpf TEXT, cnh TEXT,
       first_cnh DATE, phone TEXT, email TEXT, address TEXT, notes TEXT,
-      status TEXT DEFAULT 'negociacao', lead_id TEXT,
+      status TEXT DEFAULT 'negociacao', lead_id TEXT, additional_data JSONB DEFAULT '{}'::jsonb,
+      deleted_at TIMESTAMPTZ, deleted_by UUID, delete_reason TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE fines (
@@ -52,10 +53,16 @@ before(async () => {
       finalized_at TIMESTAMPTZ, reopened_at TIMESTAMPTZ, last_moved_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    CREATE TABLE orders (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id TEXT NOT NULL,
+      client_id UUID NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 
   const pg = db.adapters.createPg();
-  const pool = new pg.Pool();
+  pool = new pg.Pool();
 
   // Injeta o pool pg-mem no lugar de config/db ANTES de carregar os models
   // (config/db é singleton; ao pré-popular o cache, o require dos models o usa).
@@ -110,6 +117,29 @@ test('clientes: busca não vaza registros de outro tenant', async () => {
 test('clientes: contagem é isolada por tenant', async () => {
   assert.equal(Number(await clientModels.countClients(A)), 1);
   assert.equal(Number(await clientModels.countClients(B)), 1);
+});
+
+test('clientes: exclusão lógica preserva pedido vinculado e permite restauração', async () => {
+  const client = await clientModels.createClient({
+    tenant_id: A, name: 'Cliente com pedido', cpf: '33333333333', status: 'fechado',
+  });
+  const order = (await pool.query(
+    'INSERT INTO orders (tenant_id, client_id) VALUES ($1, $2) RETURNING *',
+    [A, client.id]
+  )).rows[0];
+
+  const archived = await clientModels.deleteClient(client.id, A, null, 'Cadastro duplicado');
+  assert.ok(archived.deleted_at, 'cliente deve ser marcado como excluído');
+  assert.equal(await clientModels.getClientById(client.id, A), undefined, 'cliente excluído não aparece como ativo');
+  assert.ok((await clientModels.getAllClients(A, { archived: true })).some((item) => item.id === client.id));
+  assert.ok((await pool.query('SELECT id FROM orders WHERE id = $1', [order.id])).rows[0], 'pedido deve continuar existindo');
+
+  const restored = await clientModels.restoreClient(client.id, A);
+  assert.equal(restored.deleted_at, null);
+  assert.ok(await clientModels.getClientById(client.id, A));
+
+  await pool.query('DELETE FROM orders WHERE id = $1', [order.id]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [client.id]);
 });
 
 // ─────────────────────────── PROCESSOS (fines) ───────────────────────────

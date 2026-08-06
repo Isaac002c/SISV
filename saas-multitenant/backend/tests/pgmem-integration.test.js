@@ -130,12 +130,12 @@ test('receitas: numeração sequencial via UPDATE...RETURNING e UNIQUE(tenant, n
 
   const rec1 = await receiptService.issueReceipt({ tenant_id: T, payment_id: p1.payment.id, client_name: 'A', amount: 500 }, repo);
   const rec2 = await receiptService.issueReceipt({ tenant_id: T, payment_id: p2.payment.id, client_name: 'B', amount: 500 }, repo);
-  assert.equal(rec1.full_number, 'NEXO-000001');
-  assert.equal(rec2.full_number, 'NEXO-000002');
+  assert.equal(rec1.full_number, 'SISV-000001');
+  assert.equal(rec2.full_number, 'SISV-000002');
 
   // Inserção manual de número duplicado deve violar a UNIQUE
   await assert.rejects(() => pool.query(
-    `INSERT INTO receipts (tenant_id, number, prefix, full_number) VALUES ($1, 1, 'NEXO', 'NEXO-000001')`, [T]));
+    `INSERT INTO receipts (tenant_id, number, prefix, full_number) VALUES ($1, 1, 'SISV', 'SISV-000001')`, [T]));
 });
 
 test('reemissão: cancela antigo e gera novo número (SQL real)', async () => {

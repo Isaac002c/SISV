@@ -8,6 +8,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Drawer, ConfirmDialog, EmptyState, SkeletonRows } from '../components/ui';
 import * as api from '../lib/processesAPI';
+import {
+  createNote, createTask, deleteNote, listTaskTypes, taskAction, updateNote, updateTask,
+} from '../lib/operationsAPI';
 import { getChecklist } from '../lib/tenantConfigAPI';
 import { uploadFile } from '../lib/uploadsAPI';
 import { fmtDate, fmtDateTime, prazoInfo } from '../lib/format';
@@ -28,6 +31,14 @@ const ACTION_LABELS = {
   note_added: 'Observação',
   finalized: 'Finalização',
   reopened: 'Reabertura',
+  task_created: 'Pendência criada',
+  task_updated: 'Pendência atualizada',
+  task_completed: 'Pendência concluída',
+  task_cancelled: 'Pendência cancelada',
+  task_reopened: 'Pendência reaberta',
+  note_created: 'Nota interna criada',
+  note_updated: 'Nota interna editada',
+  note_archived: 'Nota interna arquivada',
 };
 
 export default function ProcessDrawer({ id, config, assignees, isAdmin, onClose, onChanged }) {
@@ -58,7 +69,7 @@ export default function ProcessDrawer({ id, config, assignees, isAdmin, onClose,
 
   const tabs = [
     ['overview', 'Visão geral'], ['flow', 'Andamento'],
-    ['docs', 'Documentos'], ['notes', 'Observações'], ['history', 'Histórico'],
+    ['tasks', 'Pendências'], ['docs', 'Documentos'], ['notes', 'Notas internas'], ['history', 'Histórico'],
   ];
 
   return (
@@ -72,8 +83,8 @@ export default function ProcessDrawer({ id, config, assignees, isAdmin, onClose,
             {tabs.map(([k, l]) => (
               <button key={k} onClick={() => setTab(k)} style={{
                 padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer',
-                fontSize: 13.5, fontWeight: 600, color: tab === k ? '#15803d' : '#94a3b8',
-                borderBottom: `2px solid ${tab === k ? '#15803d' : 'transparent'}`, marginBottom: -1,
+                fontSize: 13.5, fontWeight: 600, color: tab === k ? 'var(--primary)' : 'var(--text-muted)',
+                borderBottom: `2px solid ${tab === k ? 'var(--primary)' : 'transparent'}`, marginBottom: -1,
               }}>{l}</button>
             ))}
           </div>
@@ -84,6 +95,7 @@ export default function ProcessDrawer({ id, config, assignees, isAdmin, onClose,
               act={act} setConfirm={setConfirm} />
           )}
           {tab === 'docs' && <DocsTab data={data} config={config} isAdmin={isAdmin} act={act} busy={busy} />}
+          {tab === 'tasks' && <TasksTab data={data} config={config} assignees={assignees} isAdmin={isAdmin} act={act} busy={busy} />}
           {tab === 'notes' && <NotesTab data={data} act={act} busy={busy} />}
           {tab === 'history' && <HistoryTab data={data} />}
 
@@ -119,6 +131,7 @@ function OverviewTab({ data, config, byCode, act, busy }) {
       fine_number: data.fine_number || '', protocol_number: data.protocol_number || '',
       tenant_service_type_id: data.tenant_service_type_id || '',
       opened_at: toInput(data.infraction_date), due_date: toInput(data.due_date),
+      custom_data: data.custom_data || {},
     });
     setEditing(true);
   };
@@ -128,9 +141,13 @@ function OverviewTab({ data, config, byCode, act, busy }) {
       fine_number: form.fine_number, protocol_number: form.protocol_number,
       tenant_service_type_id: form.tenant_service_type_id || null,
       opened_at: form.opened_at || null, due_date: form.due_date || null,
+      custom_data: form.custom_data || {},
     }));
     setEditing(false);
   };
+
+  const selectedService = config.serviceTypes.find((item) => item.id === (editing ? form.tenant_service_type_id : data.tenant_service_type_id));
+  const customFields = Array.isArray(selectedService?.custom_fields) ? selectedService.custom_fields.filter((field) => field.active !== false) : [];
 
   if (editing) {
     return (
@@ -147,6 +164,12 @@ function OverviewTab({ data, config, byCode, act, busy }) {
           <div className="form-group"><label>Data de abertura</label><input type="date" value={form.opened_at} onChange={set('opened_at')} /></div>
           <div className="form-group"><label>Prazo</label><input type="date" value={form.due_date} onChange={set('due_date')} /></div>
         </div>
+        {customFields.length > 0 && <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10 }}>
+          <strong style={{ fontSize: 13 }}>Campos complementares</strong>
+          {customFields.sort((a, b) => (a.order || 0) - (b.order || 0)).map((field) => (
+            <CustomFieldInput key={field.key} field={field} value={form.custom_data?.[field.key]} onChange={(value) => setForm((current) => ({ ...current, custom_data: { ...(current.custom_data || {}), [field.key]: value } }))} />
+          ))}
+        </div>}
         <div className="form-actions">
           <button className="btn-secondary" onClick={() => setEditing(false)} disabled={busy}>Cancelar</button>
           <button className="btn-primary" onClick={save} disabled={busy}>Salvar dados</button>
@@ -177,9 +200,25 @@ function OverviewTab({ data, config, byCode, act, busy }) {
       <Row label="Prazo"><span style={{ color: pr.color, fontWeight: pr.weight }}>{pr.text}{pr.tag ? ` (${pr.tag})` : ''}</span></Row>
       <Row label="Última movimentação">{fmtDate(data.last_moved_at || data.updated_at)}</Row>
       {data.finalized_at && <Row label="Finalizado em">{fmtDate(data.finalized_at)}</Row>}
+      {customFields.map((field) => <Row key={field.key} label={field.name}>{formatCustomValue(data.custom_data?.[field.key])}</Row>)}
     </div>
   );
 }
+
+function CustomFieldInput({ field, value, onChange }) {
+  if (field.type === 'booleano') {
+    return <label className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} /> {field.name}{field.required ? ' *' : ''}</label>;
+  }
+  if (field.type === 'selecao') {
+    return <div className="form-group"><label>{field.name}{field.required ? ' *' : ''}</label><select required={field.required} value={value ?? ''} onChange={(event) => onChange(event.target.value)}><option value="">—</option>{(field.options || []).map((option) => <option key={option} value={option}>{option}</option>)}</select></div>;
+  }
+  if (field.type === 'texto_longo') {
+    return <div className="form-group"><label>{field.name}{field.required ? ' *' : ''}</label><textarea required={field.required} rows={3} value={value ?? ''} onChange={(event) => onChange(event.target.value)} /></div>;
+  }
+  return <div className="form-group"><label>{field.name}{field.required ? ' *' : ''}</label><input required={field.required} type={field.type === 'numero' ? 'number' : field.type === 'data' ? 'date' : 'text'} value={value ?? ''} onChange={(event) => onChange(field.type === 'numero' ? event.target.valueAsNumber : event.target.value)} /></div>;
+}
+
+const formatCustomValue = (value) => value === true ? 'Sim' : value === false ? 'Não' : (value ?? '—');
 
 function FlowTab({ data, config, assignees, isAdmin, busy, act, setConfirm }) {
   const [stage, setStage] = useState(data.stage);
@@ -312,23 +351,154 @@ function DocChecklist({ serviceTypeId, documents }) {
   );
 }
 
+function TasksTab({ data, config, assignees, isAdmin, act, busy }) {
+  const [types, setTypes] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [filters, setFilters] = useState({ status: 'ativas', priority: '' });
+  const [form, setForm] = useState({ title: '', description: '', task_type_id: '', priority: 'normal', assignee_id: data.seller_id || '', department_id: data.department_id || '', due_at: '' });
+  useEffect(() => { listTaskTypes().then(setTypes).catch(() => setTypes([])); }, []);
+  const submit = async (event) => {
+    event.preventDefault();
+    const payload = {
+      ...form,
+      task_type_id: form.task_type_id || null,
+      assignee_id: form.assignee_id || null,
+      department_id: form.department_id || null,
+      due_at: form.due_at || null,
+    };
+    await act(() => editingId
+      ? updateTask(editingId, payload)
+      : createTask({ fine_id: data.id, ...payload }));
+    setForm({ title: '', description: '', task_type_id: '', priority: 'normal', assignee_id: data.seller_id || '', department_id: data.department_id || '', due_at: '' });
+    setEditingId(null);
+    setShowForm(false);
+  };
+  const edit = (task) => {
+    setEditingId(task.id);
+    setForm({
+      title: task.title || '',
+      description: task.description || '',
+      task_type_id: task.task_type_id || '',
+      priority: task.priority || 'normal',
+      assignee_id: task.assignee_id || '',
+      department_id: task.department_id || '',
+      due_at: task.due_at ? new Date(task.due_at).toISOString().slice(0, 16) : '',
+    });
+    setShowForm(true);
+  };
+  const transition = (task, action) => {
+    if (action === 'complete') {
+      const note = window.prompt('Resultado/observação da conclusão:');
+      if (!note) return;
+      return act(() => taskAction(task.id, action, { result: 'Concluída', completion_note: note }));
+    }
+    return act(() => taskAction(task.id, action));
+  };
+  const allTasks = data.tasks || [];
+  const tasks = allTasks.filter((task) => {
+    const closed = ['concluida', 'cancelada'].includes(task.status);
+    if (filters.status === 'ativas' && closed) return false;
+    if (filters.status === 'concluidas' && task.status !== 'concluida') return false;
+    if (filters.status === 'canceladas' && task.status !== 'cancelada') return false;
+    if (filters.status === 'atrasadas' && !task.overdue) return false;
+    if (filters.priority && task.priority !== filters.priority) return false;
+    return true;
+  });
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <strong style={{ fontSize: 13.5 }}>{allTasks.filter((task) => !['concluida', 'cancelada'].includes(task.status)).length} pendência(s) ativa(s)</strong>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <select aria-label="Filtrar situação das pendências" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+            <option value="ativas">Ativas</option><option value="todas">Todas</option>
+            <option value="atrasadas">Atrasadas</option><option value="concluidas">Concluídas</option>
+            <option value="canceladas">Canceladas</option>
+          </select>
+          <select aria-label="Filtrar prioridade das pendências" value={filters.priority} onChange={(event) => setFilters({ ...filters, priority: event.target.value })}>
+            <option value="">Todas as prioridades</option><option value="baixa">Baixa</option>
+            <option value="normal">Normal</option><option value="alta">Alta</option><option value="critica">Crítica</option>
+          </select>
+          <button className="btn-primary" onClick={() => {
+            setEditingId(null);
+            setForm({ title: '', description: '', task_type_id: '', priority: 'normal', assignee_id: data.seller_id || '', department_id: data.department_id || '', due_at: '' });
+            setShowForm((value) => !value);
+          }}>+ Nova pendência</button>
+        </div>
+      </div>
+      {showForm && <form onSubmit={submit} style={{ padding: 12, border: '1px solid #d1fae5', background: '#f0fdf4', borderRadius: 10, marginBottom: 14 }}>
+        <strong style={{ display: 'block', marginBottom: 8 }}>{editingId ? 'Editar pendência' : 'Nova pendência'}</strong>
+        <div className="form-group"><label htmlFor="task-title">Título *</label><input id="task-title" autoFocus required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></div>
+        <div className="form-group"><label htmlFor="task-description">Descrição</label><textarea id="task-description" rows={2} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div>
+        <div className="form-row">
+          <div className="form-group"><label>Tipo</label><select value={form.task_type_id} onChange={(event) => setForm({ ...form, task_type_id: event.target.value })}><option value="">Outro</option>{types.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}</select></div>
+          <div className="form-group"><label>Prioridade</label><select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })}><option value="baixa">Baixa</option><option value="normal">Normal</option><option value="alta">Alta</option><option value="critica">Crítica</option></select></div>
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label>Responsável</label><select value={form.assignee_id} onChange={(event) => setForm({ ...form, assignee_id: event.target.value })}><option value="">Sem responsável</option>{assignees.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></div>
+          <div className="form-group"><label>Setor</label><select value={form.department_id} onChange={(event) => setForm({ ...form, department_id: event.target.value })}><option value="">Sem setor</option>{config.departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></div>
+        </div>
+        <div className="form-group"><label>Prazo</label><input type="datetime-local" value={form.due_at} onChange={(event) => setForm({ ...form, due_at: event.target.value })} /></div>
+        <div className="form-actions"><button type="button" className="btn-secondary" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancelar</button><button className="btn-primary" disabled={busy}>{editingId ? 'Salvar alterações' : 'Criar pendência'}</button></div>
+      </form>}
+      {!tasks.length ? <EmptyState small title="Nenhuma pendência neste filtro" description="Ajuste os filtros ou crie uma atividade vinculada ao processo." /> : tasks.map((task) => {
+        const closed = ['concluida', 'cancelada'].includes(task.status);
+        return <article key={task.id} aria-label={task.title} style={{ padding: 11, border: `1px solid ${task.overdue ? '#fecaca' : '#e2e8f0'}`, borderRadius: 9, marginBottom: 8, background: task.overdue ? '#fff7f7' : '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <div><strong style={{ fontSize: 13.5 }}>{task.title}</strong><div style={{ fontSize: 11.5, color: '#64748b', marginTop: 3 }}>{[task.task_type_label, task.assignee_name, task.department_name].filter(Boolean).join(' · ')}</div></div>
+            <Badge label={task.priority} color={task.priority === 'critica' ? '#dc2626' : task.priority === 'alta' ? '#d97706' : '#64748b'} />
+          </div>
+          {task.due_at && <div style={{ fontSize: 11.5, color: task.overdue ? '#dc2626' : '#64748b', marginTop: 6 }}>Prazo: {fmtDateTime(task.due_at)}</div>}
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            {!closed && task.status === 'aberta' && <button className="btn-secondary" disabled={busy} onClick={() => transition(task, 'start')}>Iniciar</button>}
+            {!closed && <button className="btn-primary" disabled={busy} onClick={() => transition(task, 'complete')}>Concluir</button>}
+            {!closed && <button className="btn-secondary" disabled={busy} onClick={() => transition(task, 'wait')}>Aguardar terceiro</button>}
+            <button className="btn-secondary" disabled={busy} onClick={() => edit(task)}>Editar</button>
+            {!closed && <button className="btn-secondary" disabled={busy} onClick={() => transition(task, 'cancel')}>Cancelar</button>}
+            {closed && isAdmin && <button className="btn-secondary" disabled={busy} onClick={() => transition(task, 'reopen')}>Reabrir</button>}
+          </div>
+          {task.completion_note && <div style={{ padding: 8, background: '#f8fafc', marginTop: 8, fontSize: 12 }}>{task.completion_note}</div>}
+        </article>;
+      })}
+    </div>
+  );
+}
+
 function NotesTab({ data, act, busy }) {
   const [note, setNote] = useState('');
   const submit = async () => {
     if (!note.trim()) return;
-    await act(() => api.addNote(data.id, note.trim()));
+    await act(() => createNote(data.id, { content: note.trim() }));
     setNote('');
+  };
+  const notes = data.internal_notes || [];
+  const edit = (item) => {
+    const content = window.prompt('Editar nota interna:', item.content);
+    if (!content?.trim() || content.trim() === item.content) return;
+    act(() => updateNote(item.id, { content: content.trim() }));
+  };
+  const archive = (item) => {
+    if (!window.confirm('Arquivar esta nota? O registro permanecerá na auditoria.')) return;
+    act(() => deleteNote(item.id));
   };
   return (
     <div>
       <div className="form-group">
-        <label>Nova observação</label>
-        <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Registrar uma observação no processo..." />
+        <label htmlFor="internal-note">Nova nota interna</label>
+        <textarea id="internal-note" rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Use @nome para mencionar um usuário..." />
       </div>
-      <button className="btn-primary" disabled={busy || !note.trim()} onClick={submit} style={{ marginBottom: 16 }}>Adicionar observação</button>
-      <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, color: '#334155', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, minHeight: 60 }}>
-        {data.notes || 'Sem observações registradas.'}
-      </div>
+      <button className="btn-primary" disabled={busy || !note.trim()} onClick={submit} style={{ marginBottom: 16 }}>Adicionar nota</button>
+      {data.notes && <div style={{ whiteSpace: 'pre-wrap', fontSize: 12.5, color: '#64748b', background: '#f8fafc', padding: 10, borderRadius: 8, marginBottom: 12 }}><strong>Observações legadas</strong><br />{data.notes}</div>}
+      {!notes.length ? <EmptyState small title="Sem notas internas" /> : notes.map((item) => (
+        <article key={item.id} style={{ borderBottom: '1px solid #e2e8f0', padding: '10px 0' }}>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, color: '#334155' }}>{item.content}</div>
+          <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 5 }}>{item.author_name || 'Usuário inativo'} · {fmtDateTime(item.created_at)}{item.edited_at ? ' · editada' : ''}</div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <button className="btn-secondary" disabled={busy} onClick={() => edit(item)}>Editar</button>
+            <button className="btn-secondary" disabled={busy} onClick={() => archive(item)}>Arquivar</button>
+          </div>
+        </article>
+      ))}
     </div>
   );
 }
@@ -340,7 +510,7 @@ function HistoryTab({ data }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {logs.map((l) => (
         <div key={l.id} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: '1px solid #f1f5f9' }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#15803d', marginTop: 6, flexShrink: 0 }} />
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--primary-bright)', marginTop: 6, flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0f172a' }}>{ACTION_LABELS[l.action] || l.action}</div>
             {(l.old_value || l.new_value) && (
@@ -355,4 +525,3 @@ function HistoryTab({ data }) {
     </div>
   );
 }
-

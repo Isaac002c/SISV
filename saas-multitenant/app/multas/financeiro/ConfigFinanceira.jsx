@@ -39,7 +39,7 @@ function EmpresaSettings() {
         setForm({
           razao_social: d.razao_social || '', document: d.document || '', address: d.address || '',
           phone: d.phone || '', email: d.email || '', logo_url: d.logo_url || '',
-          receipt_prefix: d.receipt_prefix || 'NEXO',
+          receipt_prefix: d.receipt_prefix || 'SISV',
           next_receipt_number: String(d.next_receipt_number || 1),
           enabled_payment_methods: d.enabled_payment_methods || PAYMENT_METHODS.map((m) => m.value),
         });
@@ -102,7 +102,7 @@ function EmpresaSettings() {
         <div className="form-row">
           <div className="form-group">
             <label>Prefixo</label>
-            <input type="text" value={form.receipt_prefix} onChange={set('receipt_prefix')} maxLength={20} placeholder="NEXO" />
+            <input type="text" value={form.receipt_prefix} onChange={set('receipt_prefix')} maxLength={20} placeholder="SISV" />
           </div>
           <div className="form-group">
             <label>Próximo número</label>
@@ -111,7 +111,7 @@ function EmpresaSettings() {
         </div>
         <p style={{ fontSize: 12, color: '#94a3b8' }}>
           Já existem recibos até o número {data?.max_receipt_number ?? 0}. O próximo número deve ser maior que este.
-          Exemplo do formato: <strong>{(form.receipt_prefix || 'NEXO')}-{String(form.next_receipt_number || 1).padStart(6, '0')}</strong>
+          Exemplo do formato: <strong>{(form.receipt_prefix || 'SISV')}-{String(form.next_receipt_number || 1).padStart(6, '0')}</strong>
         </p>
       </div>
 

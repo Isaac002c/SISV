@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "saas-multitenant", "run", "dev"],
       "port": 3001
+    },
+    {
+      "name": "sisv-demo-backend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["saas-multitenant/backend/sisv-demo-server.js"],
+      "port": 5000
     }
   ]
 }

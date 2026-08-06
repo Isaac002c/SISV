@@ -142,7 +142,7 @@ test('formatReceiptNumber', () => {
   assert.equal(calc.formatReceiptNumber('NEXO', 1), 'NEXO-000001');
   assert.equal(calc.formatReceiptNumber('CR', 123), 'CR-000123');
   assert.equal(calc.formatReceiptNumber('nexo', 999999), 'NEXO-999999');
-  assert.equal(calc.formatReceiptNumber('', 5), 'NEXO-000005');
+  assert.equal(calc.formatReceiptNumber('', 5), 'SISV-000005');
   assert.equal(calc.formatReceiptNumber('n e x-o', 5), 'NEXO-000005');
 });
 

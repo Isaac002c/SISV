@@ -49,9 +49,9 @@ const DEFAULT_CATEGORIES = [
 
 // Identidade padrão do produto (usada quando o tenant não tem branding próprio).
 const DEFAULT_BRANDING = {
-  name: 'Nexos',
-  signature: 'by Nexos',
-  receipt_prefix: 'NEXOS',
+  name: 'SISV',
+  signature: 'Uma solução TELUN',
+  receipt_prefix: 'SISV',
 };
 
 module.exports = {

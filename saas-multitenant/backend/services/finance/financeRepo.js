@@ -106,7 +106,7 @@ function createTx(client) {
       await q(
         `INSERT INTO tenant_financial_settings (tenant_id, receipt_prefix)
          VALUES ($1, $2) ON CONFLICT (tenant_id) DO NOTHING`,
-        [tenantId, defaultPrefix || 'NEXO']
+        [tenantId, defaultPrefix || 'SISV']
       );
       const { rows } = await q(
         `SELECT * FROM tenant_financial_settings WHERE tenant_id = $1 FOR UPDATE`,

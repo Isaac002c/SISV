@@ -90,6 +90,28 @@ services:
     networks: [sisv-network]
     logging: { driver: "json-file", options: { max-size: "10m", max-file: "3" } }
 
+  # ── Cloudflare Tunnel NOMEADO — publica a API em HTTPS sem abrir porta ──────
+  # Publica o backend em https://api-sisv.chronostek.com.br SEM expor porta no
+  # host (80/443 já são usados por outras stacks desta VPS).
+  #
+  # A rota é configurada no painel Cloudflare (Zero Trust → Networks → Tunnels):
+  #   Public hostname: api-sisv.chronostek.com.br → Service: http://sisv-backend:5000
+  #
+  # O token fica em deploy/sisv-tunnel.env (TUNNEL_TOKEN=..., chmod 600, fora do
+  # git). O cloudflared alcança o backend pela rede interna sisv-network — nunca
+  # por 127.0.0.1, que dentro do container é o próprio container.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: sisv-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    env_file: ./sisv-tunnel.env
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [sisv-network]
+    logging: { driver: "json-file", options: { max-size: "10m", max-file: "3" } }
+
   # ── Proxy/SSL (profile "proxy") — apenas com domínio próprio e portas livres ──
   nginx:
     image: nginx:1.27-alpine

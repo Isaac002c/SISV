@@ -1,7 +1,7 @@
 // URLs relativas — o Next.js proxy (next.config.js rewrites) encaminha para o backend
 const API_URL = '';
 
-const getAuthHeaders = () => {
+export const getAuthHeaders = () => {
   if (typeof window !== 'undefined') {
     let token =
       localStorage.getItem('token') ||
@@ -24,6 +24,32 @@ const getAuthHeaders = () => {
   }
 
   return { 'Content-Type': 'application/json' };
+};
+
+export const downloadAuthenticated = async (endpoint, { method = 'GET', body, filename = 'export.csv' } = {}) => {
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    method,
+    headers: { ...getAuthHeaders() },
+    credentials: 'include',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const data = JSON.parse(await res.text());
+      message = data.error || data.message || message;
+    } catch { /* noop */ }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
 };
 
 export const apiRequest = async (endpoint, options = {}) => {
