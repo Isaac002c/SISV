@@ -71,11 +71,31 @@ test.describe.serial('SISV 1.0 - fluxos críticos', () => {
     await page.getByRole('button', { name: /Novo Cliente/ }).click();
     const clientDialog = page.getByRole('dialog', { name: /Novo Cliente/ });
     await clientDialog.getByLabel(/Nome completo/).fill(createdClient);
+    await clientDialog.getByLabel(/Tipo de cliente/).selectOption('pj');
+    await clientDialog.getByLabel(/Categoria do cliente/).selectOption('empresarial');
+    await clientDialog.getByLabel('RG', { exact: true }).fill('123456789');
     await clientDialog.getByLabel('CPF').fill('12345678901');
-    await clientDialog.getByLabel('CNH').fill(`CNH${String(runId).slice(-8)}`);
+    await clientDialog.getByLabel('CNH', { exact: true }).fill(`CNH${String(runId).slice(-8)}`);
+    await clientDialog.getByLabel(/Categoria da CNH/).selectOption('AB');
     await clientDialog.getByLabel('E-mail').fill(createdUserEmail);
+    await clientDialog.getByLabel(/Nº WhatsApp/).fill('21999990000');
+    await clientDialog.getByLabel(/Meio de contato preferencial/).selectOption('whatsapp');
+    await clientDialog.getByLabel(/Origem do cliente/).selectOption('indicacao');
+    await clientDialog.getByLabel(/Responsável \(apenas PJ\)/).fill('Responsável E2E');
+    await clientDialog.getByLabel(/Dados adicionais/).fill('Cadastro completo validado pelo E2E.');
+    await clientDialog.locator('#client-detran-login').fill('usuario.detran');
+    await clientDialog.locator('#client-detran-password').fill('SenhaDetran123!');
     await clientDialog.getByRole('button', { name: 'Criar cliente' }).click();
     await expect(page.getByText(createdClient, { exact: true })).toBeVisible();
+
+    await page.getByText(createdClient, { exact: true }).click();
+    const clientDrawer = page.getByRole('dialog');
+    await expect(clientDrawer).toContainText('EMPRESARIAL');
+    await expect(clientDrawer).toContainText('Responsável E2E');
+    await expect(clientDrawer).toContainText('usuario.detran');
+    await clientDrawer.getByRole('button', { name: 'Mostrar' }).click();
+    await expect(clientDrawer).toContainText('SenhaDetran123!');
+    await clientDrawer.getByRole('button', { name: /Fechar painel/ }).click();
   });
 
   test('processo com template percorre documento, checklist, movimento, redistribuição, pendência e histórico', async ({ page }) => {

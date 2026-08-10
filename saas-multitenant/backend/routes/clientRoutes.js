@@ -2,8 +2,24 @@ const express = require('express');
 const router = express.Router();
 const clientModel = require('../models/clientModels');
 const clientFields = require('../models/clientFieldModels');
+const {
+  normalizeRegistration, normalizePortalAccess, canViewPortalSecrets,
+  clientForViewer, clientForAudit,
+} = require('../models/clientRegistration');
+const { cleanOrNull } = require('../services/commercialCommon');
 const { checkPermission } = require('../middlewares/checkPermission');
 const activityLog = require('../services/activityLogService');
+
+const presentClient = (req, client) =>
+  clientForViewer(client, canViewPortalSecrets(req.userRole));
+const presentClients = (req, clients) => clients.map((client) => presentClient(req, client));
+
+const sendClientError = (res, err) => {
+  if (err.code === '23505' && err.constraint === 'uq_clients_code') {
+    return res.status(409).json({ success: false, error: 'Código do cliente já cadastrado.' });
+  }
+  return res.status(err.status || 500).json({ success: false, error: err.message });
+};
 
 const requireAdmin = (req, res, next) => {
   if (req.userRole !== 'admin') {
@@ -21,7 +37,7 @@ router.get('/', checkPermission('clients:read'), async (req, res) => {
       return res.status(403).json({ success: false, error: 'Apenas administradores podem consultar clientes excluídos' });
     }
     const clients = await clientModel.getAllClients(tenantId, { archived });
-    res.json({ success: true, data: clients });
+    res.json({ success: true, data: presentClients(req, clients) });
   } catch (err) {
     console.error('Erro ao buscar clientes:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -39,7 +55,7 @@ router.get('/search', checkPermission('clients:read'), async (req, res) => {
     }
     
     const clients = await clientModel.searchClients(tenantId, q);
-    res.json({ success: true, data: clients });
+    res.json({ success: true, data: presentClients(req, clients) });
   } catch (err) {
     console.error('Erro ao pesquisar clientes:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -73,10 +89,10 @@ router.post('/:id/restore', checkPermission('clients:update'), requireAdmin, asy
       entity_type: 'client',
       entity_id: client.id,
       description: `Cliente restaurado: ${client.name}`,
-      metadata: { restored_data: client },
+      metadata: { restored_data: clientForAudit(client) },
     }).catch(() => {});
 
-    res.json({ success: true, data: client, message: 'Cliente restaurado com sucesso' });
+    res.json({ success: true, data: presentClient(req, client), message: 'Cliente restaurado com sucesso' });
   } catch (err) {
     console.error('Erro ao restaurar cliente:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -95,7 +111,7 @@ router.get('/:id', checkPermission('clients:read'), async (req, res) => {
       return res.status(404).json({ success: false, error: 'Cliente não encontrado' });
     }
     
-    res.json({ success: true, data: client });
+    res.json({ success: true, data: presentClient(req, client) });
   } catch (err) {
     console.error('Erro ao buscar cliente:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -131,12 +147,17 @@ router.post('/', checkPermission('clients:create'), async (req, res) => {
     }
 
     const additionalData = await clientFields.normalizeAdditionalData(tenantId, req.body.additional_data);
+    const registration = normalizeRegistration(req.body);
+    const portalAccess = normalizePortalAccess(req.body.portal_access) || {};
     const client = await clientModel.createClient({
       tenant_id: tenantId,
       name: name.trim(), birth_date, cpf: cpfNormalized, cnh, first_cnh,
       phone, email, address, notes,
       status: status || 'negociacao',
       additional_data: additionalData,
+      client_code: cleanOrNull(req.body.client_code, 40),
+      ...registration,
+      portal_access: portalAccess,
     });
 
     // Histórico (§11) — registrado pelo backend; não bloqueia a operação.
@@ -144,10 +165,10 @@ router.post('/', checkPermission('clients:create'), async (req, res) => {
       `Cliente cadastrado: ${client.name}`,
       { name: client.name, cpf: client.cpf, status: client.status }).catch(() => {});
 
-    res.status(201).json({ success: true, data: client });
+    res.status(201).json({ success: true, data: presentClient(req, client) });
   } catch (err) {
     console.error('Erro ao criar cliente:', err);
-    res.status(err.status || 500).json({ success: false, error: err.message });
+    sendClientError(res, err);
   }
 });
 
@@ -186,21 +207,41 @@ router.put('/:id', checkPermission('clients:update'), async (req, res) => {
     }
 
     const additionalData = await clientFields.normalizeAdditionalData(tenantId, req.body.additional_data);
+    const registrationChanges = normalizeRegistration(req.body, { partial: true });
+    const registration = {
+      client_type: existingClient.client_type,
+      category: existingClient.category,
+      rg: existingClient.rg,
+      cnh_category: existingClient.cnh_category,
+      whatsapp: existingClient.whatsapp,
+      contact_preference: existingClient.contact_preference,
+      origin: existingClient.origin,
+      responsible_name: existingClient.responsible_name,
+      additional_info: existingClient.additional_info,
+      ...registrationChanges,
+    };
+    if (registration.client_type !== 'pj') registration.responsible_name = null;
+    const portalAccess = normalizePortalAccess(req.body.portal_access);
     const client = await clientModel.updateClient(id, {
       name: name.trim(), birth_date, cpf: cpfNormalized, cnh, first_cnh,
       phone, email, address, notes,
       status: status || existingClient.status || 'negociacao',
       additional_data: additionalData,
+      client_code: Object.prototype.hasOwnProperty.call(req.body, 'client_code')
+        ? cleanOrNull(req.body.client_code, 40) : existingClient.client_code,
+      ...registration,
+      portal_access: portalAccess,
     }, tenantId);
 
     // Histórico (§11) — registra o que mudou (old → new). Não bloqueia a operação.
     activityLog.logUpdate(tenantId, req.userId, 'client', id,
-      `Cliente atualizado: ${client.name}`, existingClient, client).catch(() => {});
+      `Cliente atualizado: ${client.name}`,
+      clientForAudit(existingClient), clientForAudit(client)).catch(() => {});
 
-    res.json({ success: true, data: client });
+    res.json({ success: true, data: presentClient(req, client) });
   } catch (err) {
     console.error('Erro ao atualizar cliente:', err);
-    res.status(err.status || 500).json({ success: false, error: err.message });
+    sendClientError(res, err);
   }
 });
 
@@ -219,9 +260,9 @@ router.delete('/:id', checkPermission('clients:delete'), async (req, res) => {
 
     // Histórico (§11) — registra a remoção com snapshot do dado. Não bloqueia a operação.
     activityLog.logDelete(tenantId, req.userId, 'client', id,
-      `Cliente arquivado: ${client.name}`, { ...client, reason }).catch(() => {});
+      `Cliente arquivado: ${client.name}`, { ...clientForAudit(client), reason }).catch(() => {});
 
-    res.json({ success: true, data: client, message: 'Cliente excluído com sucesso. O histórico foi preservado.' });
+    res.json({ success: true, data: presentClient(req, client), message: 'Cliente excluído com sucesso. O histórico foi preservado.' });
   } catch (err) {
     console.error('Erro ao deletar cliente:', err);
     res.status(500).json({ success: false, error: err.message });

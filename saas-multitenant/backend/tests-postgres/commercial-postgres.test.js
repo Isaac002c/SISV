@@ -108,7 +108,44 @@ test('migration 11 criou campos extensveis e sementes nativas por tenant', async
       WHERE tenant_id = $1 AND storage_kind = 'system'`,
     [tenantId]
   );
-  assert.equal(native.rowCount, 7);
+  // 7 nativos da migration 11 + 10 acrescentados pela migration 12.
+  assert.equal(native.rowCount, 17);
+});
+
+test('migration 12 adicionou colunas, tipo select e sementes de cadastro', async () => {
+  const { rows: columns } = await pool.query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'clients'
+        AND column_name IN ('client_code','client_type','category','rg','cnh_category',
+          'whatsapp','contact_preference','origin','responsible_name','additional_info','portal_access')`
+  );
+  assert.equal(columns.length, 11);
+
+  // O tipo 'select' passou a ser aceito pela CHECK do field_type.
+  const selects = await pool.query(
+    `SELECT field_key, field_type, validation_rules FROM client_field_definitions
+      WHERE tenant_id = $1 AND storage_kind = 'system' AND field_type = 'select'
+      ORDER BY field_key`,
+    [tenantId]
+  );
+  const selectKeys = selects.rows.map((row) => row.field_key);
+  assert.deepEqual([...selectKeys].sort(),
+    ['category','client_type','cnh_category','contact_preference','origin'].sort());
+  const clientType = selects.rows.find((row) => row.field_key === 'client_type');
+  assert.deepEqual(clientType.validation_rules.options, ['pf', 'pj']);
+
+  // O codigo do cliente e unico por tenant quando preenchido.
+  await pool.query(
+    `UPDATE clients SET client_code = 'CLI-0001' WHERE id = $1`, [clientId]);
+  const other = await pool.query(
+    `INSERT INTO clients(tenant_id, name) VALUES($1,'Cliente 2') RETURNING id`,
+    [tenantId]);
+  const duplicate = await expectUniqueViolation(
+    `UPDATE clients SET client_code = 'cli-0001' WHERE id = $1`,
+    [other.rows[0].id]);
+  assert.equal(duplicate.code, '23505');
+  // Nao vaza estado de codigo para os demais testes deste arquivo.
+  await pool.query(`UPDATE clients SET client_code = NULL WHERE id = $1`, [clientId]);
 });
 
 test('migration 11 protege chave de campo e coerencia do contratante', async () => {

@@ -6,10 +6,14 @@ const {
 } = require('../services/commercialCommon');
 
 const FIELD_TYPES = Object.freeze([
-  'text', 'textarea', 'email', 'phone', 'date', 'number', 'boolean', 'document',
+  'text', 'textarea', 'email', 'phone', 'date', 'number', 'boolean', 'document', 'select',
 ]);
 const FIELD_KEY_RE = /^[a-z][a-z0-9_]{1,59}$/;
-const SYSTEM_FIELDS = new Set(['cpf', 'birth_date', 'cnh', 'first_cnh', 'phone', 'email', 'address']);
+const SYSTEM_FIELDS = new Set([
+  'cpf', 'birth_date', 'cnh', 'first_cnh', 'phone', 'email', 'address',
+  'client_code', 'client_type', 'category', 'rg', 'cnh_category', 'whatsapp',
+  'contact_preference', 'origin', 'responsible_name', 'additional_info',
+]);
 
 function safeRules(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -20,6 +24,9 @@ function safeRules(value) {
   if (Number.isFinite(Number(value.max))) rules.max = Number(value.max);
   if (typeof value.pattern === 'string' && value.pattern.length <= 200) rules.pattern = value.pattern;
   if (typeof value.hint === 'string') rules.hint = clean(value.hint, 240);
+  if (Array.isArray(value.options)) {
+    rules.options = [...new Set(value.options.map((option) => clean(option, 80)).filter(Boolean))].slice(0, 100);
+  }
   return rules;
 }
 
@@ -260,6 +267,9 @@ function validationMessage(value, definition, extraRules = {}) {
     if (rules.min !== undefined && number < rules.min) return `valor minimo: ${rules.min}`;
     if (rules.max !== undefined && number > rules.max) return `valor maximo: ${rules.max}`;
   }
+  if (definition.field_type === 'select'
+      && Array.isArray(rules.options)
+      && !rules.options.includes(text)) return 'opcao invalida';
   if (rules.min_length !== undefined && text.length < rules.min_length) return `minimo de ${rules.min_length} caracteres`;
   if (rules.max_length !== undefined && text.length > rules.max_length) return `maximo de ${rules.max_length} caracteres`;
   if (rules.pattern) {

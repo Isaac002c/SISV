@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { nextNumber, withTransaction } = require('../services/commercialCommon');
 
 // ============================================
 // CLIENTS MODEL - Clientes/Proprietários
@@ -11,32 +12,36 @@ const toStrOrNull = (value) => (value === '' || value === undefined ? null : val
 // CREATE - Criar novo cliente
 const createClient = async ({
   tenant_id, name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status,
-  additional_data
+  additional_data, client_code, client_type, category, rg, cnh_category, whatsapp,
+  contact_preference, origin, responsible_name, additional_info, portal_access,
 }) => {
   if (!tenant_id) {
     throw new Error('tenant_id é obrigatório para criar um cliente');
   }
 
-  const result = await pool.query(
-    `INSERT INTO clients(tenant_id, name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status, additional_data)
-     VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING *`,
-    [
-      tenant_id,
-      name,
-      toDateOrNull(birth_date),
-      toStrOrNull(cpf),
-      toStrOrNull(cnh),
-      toDateOrNull(first_cnh),
-      toStrOrNull(phone),
-      toStrOrNull(email),
-      toStrOrNull(address),
-      toStrOrNull(notes),
-      status || 'negociacao',
-      JSON.stringify(additional_data || {}),
-    ]
-  );
-
-  return result.rows[0];
+  return withTransaction(async (client) => {
+    const code = toStrOrNull(client_code) || await nextNumber(client, tenant_id, 'client');
+    const result = await client.query(
+      `INSERT INTO clients(
+         tenant_id, name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status,
+         additional_data, client_code, client_type, category, rg, cnh_category, whatsapp,
+         contact_preference, origin, responsible_name, additional_info, portal_access)
+       VALUES(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,
+         $19,$20,$21,$22,$23::jsonb) RETURNING *`,
+      [
+        tenant_id, name, toDateOrNull(birth_date), toStrOrNull(cpf), toStrOrNull(cnh),
+        toDateOrNull(first_cnh), toStrOrNull(phone), toStrOrNull(email),
+        toStrOrNull(address), toStrOrNull(notes), status || 'negociacao',
+        JSON.stringify(additional_data || {}), code, toStrOrNull(client_type),
+        toStrOrNull(category), toStrOrNull(rg), toStrOrNull(cnh_category),
+        toStrOrNull(whatsapp), toStrOrNull(contact_preference), toStrOrNull(origin),
+        toStrOrNull(responsible_name), toStrOrNull(additional_info),
+        JSON.stringify(portal_access || {}),
+      ]
+    );
+    return result.rows[0];
+  });
 };
 
 // READ - Listar todos os clientes do tenant
@@ -44,6 +49,8 @@ const createClient = async ({
 const getAllClients = async (tenant_id, { archived = false } = {}) => {
   const result = await pool.query(
     `SELECT id, tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, email, address, notes, additional_data,
+            client_code, client_type, category, rg, cnh_category, whatsapp,
+            contact_preference, origin, responsible_name, additional_info, portal_access,
             status, created_at, updated_at, deleted_at, deleted_by, delete_reason
      FROM clients
      WHERE tenant_id = $1
@@ -79,11 +86,14 @@ const getClientByCPF = async (cpf, tenant_id) => {
 const searchClients = async (tenant_id, searchTerm) => {
   const result = await pool.query(
     `SELECT id, tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, email, address, notes,
-            additional_data, status, created_at
+            additional_data, client_code, client_type, category, rg, cnh_category, whatsapp,
+            contact_preference, origin, responsible_name, additional_info, portal_access,
+            status, created_at
      FROM clients
      WHERE tenant_id = $1
        AND deleted_at IS NULL
-       AND (name ILIKE $2 OR cpf ILIKE $2 OR cnh ILIKE $2 OR phone ILIKE $2)
+       AND (name ILIKE $2 OR cpf ILIKE $2 OR cnh ILIKE $2 OR phone ILIKE $2
+            OR client_code ILIKE $2 OR rg ILIKE $2 OR whatsapp ILIKE $2 OR email ILIKE $2)
      ORDER BY name ASC
      LIMIT 50`,
     [tenant_id, `%${searchTerm}%`]
@@ -103,36 +113,46 @@ const countClients = async (tenant_id) => {
 // UPDATE - Atualizar cliente
 const updateClient = async (id, {
   name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status, additional_data,
+  client_code, client_type, category, rg, cnh_category, whatsapp, contact_preference,
+  origin, responsible_name, additional_info, portal_access,
 }, tenant_id) => {
   const hasAdditionalData = additional_data !== undefined;
-  const baseValues = [
-    name,
-    toDateOrNull(birth_date),
-    toStrOrNull(cpf),
-    toStrOrNull(cnh),
-    toDateOrNull(first_cnh),
-    toStrOrNull(phone),
-    toStrOrNull(email),
-    toStrOrNull(address),
-    toStrOrNull(notes),
-    status || 'negociacao',
-  ];
-  const result = await pool.query(
-    `UPDATE clients
-     SET name = $1, birth_date = $2, cpf = $3, cnh = $4, first_cnh = $5,
-         phone = $6, email = $7, address = $8, notes = $9, status = $10,
-         ${hasAdditionalData
-    ? "additional_data = COALESCE(additional_data, '{}'::jsonb) || $11::jsonb,"
-    : ''}
-         updated_at = NOW()
-     WHERE id = $${hasAdditionalData ? 12 : 11}
-       AND tenant_id = $${hasAdditionalData ? 13 : 12}
-       AND deleted_at IS NULL RETURNING *`,
-    hasAdditionalData
-      ? [...baseValues, JSON.stringify(additional_data || {}), id, tenant_id]
-      : [...baseValues, id, tenant_id]
-  );
-  return result.rows[0];
+  const hasPortalAccess = portal_access !== undefined;
+  return withTransaction(async (client) => {
+    const code = toStrOrNull(client_code) || await nextNumber(client, tenant_id, 'client');
+    const values = [
+      name, toDateOrNull(birth_date), toStrOrNull(cpf), toStrOrNull(cnh),
+      toDateOrNull(first_cnh), toStrOrNull(phone), toStrOrNull(email),
+      toStrOrNull(address), toStrOrNull(notes), status || 'negociacao', code,
+      toStrOrNull(client_type), toStrOrNull(category), toStrOrNull(rg),
+      toStrOrNull(cnh_category), toStrOrNull(whatsapp), toStrOrNull(contact_preference),
+      toStrOrNull(origin), toStrOrNull(responsible_name), toStrOrNull(additional_info),
+    ];
+    const extraAssignments = [];
+    if (hasAdditionalData) {
+      values.push(JSON.stringify(additional_data || {}));
+      extraAssignments.push(`additional_data = COALESCE(additional_data, '{}'::jsonb) || $${values.length}::jsonb`);
+    }
+    if (hasPortalAccess) {
+      values.push(JSON.stringify(portal_access || {}));
+      extraAssignments.push(`portal_access = $${values.length}::jsonb`);
+    }
+    values.push(id, tenant_id);
+    const result = await client.query(
+      `UPDATE clients
+          SET name = $1, birth_date = $2, cpf = $3, cnh = $4, first_cnh = $5,
+              phone = $6, email = $7, address = $8, notes = $9, status = $10,
+              client_code = $11, client_type = $12, category = $13, rg = $14,
+              cnh_category = $15, whatsapp = $16, contact_preference = $17,
+              origin = $18, responsible_name = $19, additional_info = $20,
+              ${extraAssignments.length ? `${extraAssignments.join(', ')},` : ''}
+              updated_at = NOW()
+        WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
+          AND deleted_at IS NULL RETURNING *`,
+      values
+    );
+    return result.rows[0];
+  });
 };
 
 // DELETE lógico - preserva pedidos, documentos e histórico ligados ao cliente.
@@ -172,61 +192,54 @@ const ensureClientFromLead = async (lead, tenant_id) => {
   if (!tenant_id) throw new Error('tenant_id é obrigatório');
   if (!lead || !lead.id) throw new Error('lead inválido');
 
-  // 1) idempotência por vínculo direto
-  const byLead = await pool.query(
-    'SELECT id FROM clients WHERE lead_id = $1 AND tenant_id = $2 AND deleted_at IS NULL LIMIT 1',
-    [lead.id, tenant_id]
-  );
-  if (byLead.rows[0]) return { created: false, reason: 'already_linked', id: byLead.rows[0].id };
-
-  // 2) dedupe por CPF (mesma pessoa já cadastrada) — compara só dígitos
-  const cpf = String(lead.cpf || '').replace(/\D/g, '') || null;
-  if (cpf) {
-    const byCpf = await pool.query(
-      `SELECT id FROM clients
-         WHERE tenant_id = $1
-           AND deleted_at IS NULL
-           AND regexp_replace(COALESCE(cpf, ''), '\\D', '', 'g') = $2
-         LIMIT 1`,
-      [tenant_id, cpf]
+  return withTransaction(async (client) => {
+    // 1) idempotência por vínculo direto
+    const byLead = await client.query(
+      'SELECT id FROM clients WHERE lead_id = $1 AND tenant_id = $2 AND deleted_at IS NULL LIMIT 1',
+      [lead.id, tenant_id]
     );
-    if (byCpf.rows[0]) {
-      // vincula o cliente já existente a este lead (sem sobrescrever outro vínculo)
-      // e o promove a "fechado" (o lead foi fechado -> é a mesma pessoa/cliente fechado)
-      await pool.query(
-        "UPDATE clients SET lead_id = $1, status = 'fechado' WHERE id = $2 AND tenant_id = $3 AND lead_id IS NULL",
-        [lead.id, byCpf.rows[0].id, tenant_id]
+    if (byLead.rows[0]) return { created: false, reason: 'already_linked', id: byLead.rows[0].id };
+
+    // 2) dedupe por CPF (mesma pessoa já cadastrada) — compara só dígitos
+    const cpf = String(lead.cpf || '').replace(/\D/g, '') || null;
+    if (cpf) {
+      const byCpf = await client.query(
+        `SELECT id FROM clients
+           WHERE tenant_id = $1
+             AND deleted_at IS NULL
+             AND regexp_replace(COALESCE(cpf, ''), '\\D', '', 'g') = $2
+           LIMIT 1`,
+        [tenant_id, cpf]
       );
-      return { created: false, reason: 'existing_cpf', id: byCpf.rows[0].id };
+      if (byCpf.rows[0]) {
+        // vincula o cliente já existente a este lead sem sobrescrever outro vínculo
+        await client.query(
+          "UPDATE clients SET lead_id = $1, status = 'fechado' WHERE id = $2 AND tenant_id = $3 AND lead_id IS NULL",
+          [lead.id, byCpf.rows[0].id, tenant_id]
+        );
+        return { created: false, reason: 'existing_cpf', id: byCpf.rows[0].id };
+      }
     }
-  }
 
-  // 3) cria o cliente herdando os dados disponíveis do lead
-  const notesParts = [];
-  if (lead.source)          notesParts.push(`Origem: ${lead.source}`);
-  if (lead.created_by_name) notesParts.push(`Consultor: ${lead.created_by_name}`);
-  if (lead.notes)           notesParts.push(String(lead.notes));
-  const notes = notesParts.join('\n') || null;
+    // 3) cria o cliente herdando os dados disponíveis do lead
+    const notesParts = [];
+    if (lead.source) notesParts.push(`Origem: ${lead.source}`);
+    if (lead.created_by_name) notesParts.push(`Consultor: ${lead.created_by_name}`);
+    if (lead.notes) notesParts.push(String(lead.notes));
+    const notes = notesParts.join('\n') || null;
 
-  const result = await pool.query(
-    `INSERT INTO clients
-       (tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, notes, status, lead_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-     RETURNING id`,
-    [
-      tenant_id,
-      lead.name,
-      cpf,
-      toStrOrNull(lead.cnh),
-      toDateOrNull(lead.first_license_date),
-      toDateOrNull(lead.birth_date),
-      toStrOrNull(lead.phone),
-      notes,
-      'fechado',
-      lead.id,
-    ]
-  );
-  return { created: true, id: result.rows[0].id };
+    const code = await nextNumber(client, tenant_id, 'client');
+    const result = await client.query(
+      `INSERT INTO clients
+         (tenant_id, name, cpf, cnh, first_cnh, birth_date, phone, notes, status, lead_id, client_code)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING id`,
+      [tenant_id, lead.name, cpf, toStrOrNull(lead.cnh),
+       toDateOrNull(lead.first_license_date), toDateOrNull(lead.birth_date),
+       toStrOrNull(lead.phone), notes, 'fechado', lead.id, code]
+    );
+    return { created: true, id: result.rows[0].id };
+  });
 };
 
 module.exports = {

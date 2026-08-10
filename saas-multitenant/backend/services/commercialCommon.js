@@ -78,6 +78,7 @@ const NUMBER_PREFIX = Object.freeze({
   sale: 'VEN',
   service_order: 'OS',
   contract: 'CTR',
+  client: 'CLI',
 });
 
 /**

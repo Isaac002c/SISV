@@ -90,6 +90,9 @@ db.public.none(`
   CREATE TABLE clients (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL, name TEXT,
     birth_date DATE, cpf TEXT, cnh TEXT, first_cnh DATE, phone TEXT, email TEXT, address TEXT, notes TEXT,
     status TEXT DEFAULT 'negociacao', lead_id UUID, additional_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    client_code TEXT, client_type TEXT, category TEXT, rg TEXT, cnh_category TEXT, whatsapp TEXT,
+    contact_preference TEXT, origin TEXT, responsible_name TEXT, additional_info TEXT,
+    portal_access JSONB NOT NULL DEFAULT '{}'::jsonb,
     deleted_at TIMESTAMPTZ, deleted_by UUID, delete_reason TEXT,
     created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now());
   CREATE TABLE departments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL, name TEXT, color TEXT, sort_order INT DEFAULT 0, active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now());
@@ -219,20 +222,34 @@ async function seed() {
   ADMIN_ID = (await pool.query(`INSERT INTO users (tenant_id,name,username,email,password_hash,role) VALUES ($1,'Gestor Sinal Verde','gestor.sinalverde','gestor@sinalverde.com.br','x','admin') RETURNING id`, [TENANT])).rows[0].id;
   OP_ID = (await pool.query(`INSERT INTO users (tenant_id,name,username,email,password_hash,role) VALUES ($1,'Operador 1','operador.1','operador1@sinalverde.com.br','x','operator') RETURNING id`, [TENANT])).rows[0].id;
 
-  for (const [fieldKey, label, fieldType, systemColumn, sortOrder] of [
+  for (const [fieldKey, label, fieldType, systemColumn, sortOrder, rules = {}] of [
+    ['client_code', 'Código do cliente', 'text', 'client_code', 5],
+    ['client_type', 'Tipo de cliente', 'select', 'client_type', 6, { options: ['pf', 'pj'] }],
+    ['category', 'Categoria do cliente', 'select', 'category', 7,
+      { options: ['standard', 'fidelidade', 'empresarial', 'parceiro', 'agencia'] }],
     ['cpf', 'CPF', 'document', 'cpf', 10],
     ['birth_date', 'Data de nascimento', 'date', 'birth_date', 20],
     ['cnh', 'CNH', 'document', 'cnh', 30],
+    ['rg', 'RG', 'document', 'rg', 35],
+    ['cnh_category', 'Categoria da CNH', 'select', 'cnh_category', 36,
+      { options: ['A', 'B', 'C', 'D', 'E', 'AB', 'AC', 'AD', 'AE', 'ACC'] }],
     ['first_cnh', 'Data da 1a habilitacao', 'date', 'first_cnh', 40],
     ['phone', 'Telefone', 'phone', 'phone', 50],
+    ['whatsapp', 'Nº WhatsApp', 'phone', 'whatsapp', 55],
     ['email', 'E-mail', 'email', 'email', 60],
-    ['address', 'Endereco', 'textarea', 'address', 70],
+    ['contact_preference', 'Meio de contato preferencial', 'select', 'contact_preference', 65,
+      { options: ['whatsapp', 'telefone', 'email', 'sms'] }],
+    ['address', 'Endereço', 'textarea', 'address', 70],
+    ['origin', 'Origem do cliente', 'select', 'origin', 75,
+      { options: ['carteira', 'indicacao', 'balcao', 'midia_online', 'outros'] }],
+    ['responsible_name', 'Responsável (PJ)', 'text', 'responsible_name', 80],
+    ['additional_info', 'Dados adicionais', 'textarea', 'additional_info', 90],
   ]) {
     await pool.query(
       `INSERT INTO client_field_definitions
-         (tenant_id,field_key,label,field_type,storage_kind,system_column,sort_order)
-       VALUES ($1,$2,$3,$4,'system',$5,$6)`,
-      [TENANT, fieldKey, label, fieldType, systemColumn, sortOrder]
+         (tenant_id,field_key,label,field_type,storage_kind,system_column,sort_order,validation_rules)
+       VALUES ($1,$2,$3,$4,'system',$5,$6,$7::jsonb)`,
+      [TENANT, fieldKey, label, fieldType, systemColumn, sortOrder, JSON.stringify(rules)]
     );
   }
 

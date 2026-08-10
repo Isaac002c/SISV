@@ -56,10 +56,43 @@ const STATUS_LABELS = {
   fechado:    'Fechado',
 };
 
+const CLIENT_TYPE_OPTIONS = [
+  { value: 'pf', label: 'PF' }, { value: 'pj', label: 'PJ' },
+];
+const CLIENT_CATEGORY_OPTIONS = [
+  { value: 'standard', label: 'STANDARD' },
+  { value: 'fidelidade', label: 'FIDELIDADE' },
+  { value: 'empresarial', label: 'EMPRESARIAL' },
+  { value: 'parceiro', label: 'PARCEIRO' },
+  { value: 'agencia', label: 'AGÊNCIA' },
+];
+const CNH_CATEGORY_OPTIONS = ['A', 'B', 'C', 'D', 'E', 'AB', 'AC', 'AD', 'AE', 'ACC'];
+const CONTACT_OPTIONS = [
+  { value: 'whatsapp', label: 'WHATSAPP' },
+  { value: 'telefone', label: 'TELEFONE' },
+  { value: 'email', label: 'E-MAIL' },
+  { value: 'sms', label: 'SMS' },
+];
+const ORIGIN_OPTIONS = [
+  { value: 'carteira', label: 'Carteira' },
+  { value: 'indicacao', label: 'Indicação' },
+  { value: 'balcao', label: 'Balcão' },
+  { value: 'midia_online', label: 'Mídia on-line' },
+  { value: 'outros', label: 'Outros' },
+];
+const emptyPortalAccess = () => ({
+  detran: { login: '', password: '' },
+  gov: { login: '', password: '' },
+  outros: { label: '', login: '', password: '' },
+});
+
 const EMPTY_FORM = {
   name: '', birth_date: '', cpf: '', cnh: '',
   first_cnh: '', phone: '', email: '', address: '',
   notes: '', status: 'negociacao', additional_data: {},
+  client_code: '', client_type: '', category: '', rg: '', cnh_category: '',
+  whatsapp: '', contact_preference: '', origin: '', responsible_name: '',
+  additional_info: '', portal_access: emptyPortalAccess(),
 };
 
 // Exibe CPF como somente números na tabela
@@ -175,6 +208,8 @@ export default function MultasClients() {
       const value = field.storage_kind === 'system'
         ? formData[field.system_column]
         : formData.additional_data?.[field.field_key];
+      if (field.system_column === 'client_code') return false; // gerado pelo backend
+      if (field.system_column === 'responsible_name' && formData.client_type !== 'pj') return false;
       return value === null || value === undefined || String(value).trim() === '';
     });
     if (missing.length) {
@@ -236,6 +271,25 @@ export default function MultasClients() {
       notes:      client.notes      || '',
       status:     client.status     || 'negociacao',
       additional_data: client.additional_data || {},
+      client_code: client.client_code || '',
+      client_type: client.client_type || '',
+      category: client.category || '',
+      rg: client.rg || '',
+      cnh_category: client.cnh_category || '',
+      whatsapp: client.whatsapp || '',
+      contact_preference: client.contact_preference || '',
+      origin: client.origin || '',
+      responsible_name: client.responsible_name || '',
+      additional_info: client.additional_info || '',
+      portal_access: {
+        detran: { login: client.portal_access?.detran?.login || '', password: client.portal_access?.detran?.password || '' },
+        gov: { login: client.portal_access?.gov?.login || '', password: client.portal_access?.gov?.password || '' },
+        outros: {
+          label: client.portal_access?.outros?.label || '',
+          login: client.portal_access?.outros?.login || '',
+          password: client.portal_access?.outros?.password || '',
+        },
+      },
     });
     setShowModal(true);
   };
@@ -290,10 +344,21 @@ export default function MultasClients() {
   const set = (field) => (e) => {
     let value = e.target.value;
     if (field === 'cpf')   value = value.replace(/\D/g, '').slice(0, 11);
-    if (field === 'phone') value = maskPhone(value);
+    if (field === 'phone' || field === 'whatsapp') value = maskPhone(value);
     if (field === 'birth_date' || field === 'first_cnh') value = normalizeDate(value);
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => ({
+      ...prev,
+      [field]: value,
+      ...(field === 'client_type' && value !== 'pj' ? { responsible_name: '' } : {}),
+    }));
   };
+  const setPortal = (slot, field) => (event) => setFormData((previous) => ({
+    ...previous,
+    portal_access: {
+      ...(previous.portal_access || emptyPortalAccess()),
+      [slot]: { ...(previous.portal_access?.[slot] || {}), [field]: event.target.value },
+    },
+  }));
   const setAdditional = (field, value) => setFormData((previous) => ({
     ...previous, additional_data: { ...(previous.additional_data || {}), [field]: value },
   }));
@@ -304,7 +369,8 @@ export default function MultasClients() {
     if (filterStatus && c.status !== filterStatus) return false;
     if (!showArchived || !searchTerm.trim()) return true;
     const query = searchTerm.trim().toLowerCase();
-    return [c.name, c.cpf, c.cnh, c.phone].some((value) => String(value || '').toLowerCase().includes(query));
+    return [c.client_code, c.name, c.cpf, c.rg, c.cnh, c.phone, c.whatsapp, c.email]
+      .some((value) => String(value || '').toLowerCase().includes(query));
   });
 
   const negociacaoCount = clients.filter(c => c.status === 'negociacao').length;
@@ -351,7 +417,7 @@ export default function MultasClients() {
           </svg>
           <input
             type="text"
-            placeholder="Buscar por nome, CPF ou CNH..."
+            placeholder="Buscar por código, nome, CPF, RG, CNH ou contato..."
             value={searchTerm}
             onChange={handleSearch}
             className="clients-search-input"
@@ -393,7 +459,9 @@ export default function MultasClients() {
         <table className="data-table">
           <thead>
             <tr>
+              <th>Código</th>
               <th>Nome</th>
+              <th>Tipo</th>
               <th>CPF</th>
               <th>CNH</th>
               <th>Telefone</th>
@@ -405,7 +473,7 @@ export default function MultasClients() {
           <tbody>
             {displayed.length === 0 ? (
               <tr>
-                <td colSpan="7">
+                <td colSpan="9">
                   <div className="empty-state" style={{ padding: '40px 0' }}>
                     <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ marginBottom: 8 }}>
                       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
@@ -427,6 +495,9 @@ export default function MultasClients() {
                 onClick={() => { if (!showArchived) openClient(client); }}
                 className={showArchived ? '' : 'clickable-row'}
               >
+                <td style={{ color: '#475569', fontFamily: 'monospace', fontSize: 12.5 }}>
+                  {client.client_code || '—'}
+                </td>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{
@@ -446,6 +517,9 @@ export default function MultasClients() {
                       )}
                     </div>
                   </div>
+                </td>
+                <td style={{ color: '#475569', fontWeight: 600 }}>
+                  {client.client_type?.toUpperCase() || '—'}
                 </td>
                 <td style={{ color: '#475569', fontFamily: 'monospace', fontSize: 13 }}>{formatCPF(client.cpf)}</td>
                 <td style={{ color: '#475569' }}>{client.cnh || '—'}</td>
@@ -493,7 +567,7 @@ export default function MultasClients() {
       {/* Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-content" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}
+          <div className="modal-content" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}
             role="dialog" aria-modal="true" aria-labelledby="client-modal-title">
             <div className="modal-header">
               <div>
@@ -527,6 +601,28 @@ export default function MultasClients() {
                   <small>O serviço apenas altera a indicação de obrigatoriedade; nenhum dado preenchido é apagado.</small>
                 </div>
               )}
+              <h3 style={{ fontSize: 14, color: '#0f172a', margin: '4px 0 0', paddingBottom: 7, borderBottom: '1px solid #e2e8f0' }}>
+                Identificação e classificação
+              </h3>
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="client-code">Código do cliente{requiredKeys.has('client_code') ? ' *' : ''}</label>
+                  <input id="client-code" type="text" value={formData.client_code}
+                    onChange={set('client_code')} placeholder="Gerado automaticamente" maxLength={40} />
+                  <small>Se ficar vazio, o sistema gera um código único ao salvar.</small>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="client-type">Tipo de cliente{requiredKeys.has('client_type') ? ' *' : ''}</label>
+                  <select id="client-type" value={formData.client_type} onChange={set('client_type')}
+                    required={requiredKeys.has('client_type')}>
+                    <option value="">Selecione</option>
+                    {CLIENT_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               {/* Nome */}
               <div className="form-group">
                 <label htmlFor="client-name">Nome completo *</label>
@@ -538,6 +634,24 @@ export default function MultasClients() {
                   placeholder="Nome do cliente"
                   required
                 />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="client-category">Categoria do cliente{requiredKeys.has('category') ? ' *' : ''}</label>
+                  <select id="client-category" value={formData.category} onChange={set('category')}
+                    required={requiredKeys.has('category')}>
+                    <option value="">Selecione</option>
+                    {CLIENT_CATEGORY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="client-rg">RG{requiredKeys.has('rg') ? ' *' : ''}</label>
+                  <input id="client-rg" type="text" value={formData.rg} onChange={set('rg')}
+                    required={requiredKeys.has('rg')} maxLength={30} />
+                </div>
               </div>
 
               {/* CPF + Nascimento */}
@@ -562,7 +676,7 @@ export default function MultasClients() {
                 </div>
               </div>
 
-              {/* CNH + 1ª habilitação */}
+              {/* CNH + categoria */}
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="client-cnh">CNH{requiredKeys.has('cnh') ? ' *' : ''}</label>
@@ -576,11 +690,24 @@ export default function MultasClients() {
                   />
                 </div>
                 <div className="form-group">
-                  <label htmlFor="client-first-cnh">1ª Habilitação{requiredKeys.has('first_cnh') ? ' *' : ''}</label>
-                  <input id="client-first-cnh" type="text" required={requiredKeys.has('first_cnh')}
-                    value={formData.first_cnh} onChange={set('first_cnh')} placeholder="ex: 11092006 ou 11/09/2006" />
+                  <label htmlFor="client-cnh-category">Categoria da CNH{requiredKeys.has('cnh_category') ? ' *' : ''}</label>
+                  <select id="client-cnh-category" value={formData.cnh_category} onChange={set('cnh_category')}
+                    required={requiredKeys.has('cnh_category')}>
+                    <option value="">Selecione</option>
+                    {CNH_CATEGORY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
                 </div>
               </div>
+
+              <div className="form-group">
+                <label htmlFor="client-first-cnh">1ª Habilitação{requiredKeys.has('first_cnh') ? ' *' : ''}</label>
+                <input id="client-first-cnh" type="text" required={requiredKeys.has('first_cnh')}
+                  value={formData.first_cnh} onChange={set('first_cnh')} placeholder="ex: 11092006 ou 11/09/2006" />
+              </div>
+
+              <h3 style={{ fontSize: 14, color: '#0f172a', margin: '4px 0 0', paddingBottom: 7, borderBottom: '1px solid #e2e8f0' }}>
+                Contato e origem
+              </h3>
 
               {/* Telefone + Email */}
               <div className="form-row">
@@ -609,6 +736,36 @@ export default function MultasClients() {
               </div>
 
               {/* Endereço */}
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="client-whatsapp">Nº WhatsApp{requiredKeys.has('whatsapp') ? ' *' : ''}</label>
+                  <input id="client-whatsapp" type="text" value={formData.whatsapp}
+                    onChange={set('whatsapp')} placeholder="(21) 99999-0000"
+                    required={requiredKeys.has('whatsapp')} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="client-contact-preference">Meio de contato preferencial{requiredKeys.has('contact_preference') ? ' *' : ''}</label>
+                  <select id="client-contact-preference" value={formData.contact_preference}
+                    onChange={set('contact_preference')} required={requiredKeys.has('contact_preference')}>
+                    <option value="">Selecione</option>
+                    {CONTACT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="client-origin">Origem do cliente{requiredKeys.has('origin') ? ' *' : ''}</label>
+                <select id="client-origin" value={formData.origin} onChange={set('origin')}
+                  required={requiredKeys.has('origin')}>
+                  <option value="">Selecione</option>
+                  {ORIGIN_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="form-group">
                 <label htmlFor="client-address">Endereço{requiredKeys.has('address') ? ' *' : ''}</label>
                 <input
@@ -619,6 +776,22 @@ export default function MultasClients() {
                   placeholder="Rua, número, bairro, cidade"
                   required={requiredKeys.has('address')}
                 />
+              </div>
+
+              {formData.client_type === 'pj' && (
+                <div className="form-group">
+                  <label htmlFor="client-responsible">Responsável (apenas PJ){requiredKeys.has('responsible_name') ? ' *' : ''}</label>
+                  <input id="client-responsible" type="text" value={formData.responsible_name}
+                    onChange={set('responsible_name')} required={requiredKeys.has('responsible_name')}
+                    maxLength={160} placeholder="Nome do responsável pela empresa" />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label htmlFor="client-additional-info">Dados adicionais{requiredKeys.has('additional_info') ? ' *' : ''}</label>
+                <textarea id="client-additional-info" value={formData.additional_info}
+                  onChange={set('additional_info')} required={requiredKeys.has('additional_info')}
+                  rows={3} placeholder="Informações complementares do cadastro..." />
               </div>
 
               {fieldDefinitions.filter((field) => field.storage_kind === 'custom').map((field) => (
@@ -645,6 +818,65 @@ export default function MultasClients() {
                   )}
                 </div>
               ))}
+
+              <h3 style={{ fontSize: 14, color: '#0f172a', margin: '4px 0 0', paddingBottom: 7, borderBottom: '1px solid #e2e8f0' }}>
+                Acessos
+              </h3>
+              <p style={{ fontSize: 12, color: '#64748b', margin: '-4px 0 2px' }}>
+                Credenciais visíveis apenas para perfis autorizados a alterar o cliente.
+              </p>
+              <div style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc' }}>
+                <strong style={{ display: 'block', marginBottom: 9, fontSize: 13 }}>Acesso DETRAN</strong>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="client-detran-login">Usuário / login</label>
+                    <input id="client-detran-login" type="text" value={formData.portal_access?.detran?.login || ''}
+                      onChange={setPortal('detran', 'login')} autoComplete="off" />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="client-detran-password">Senha</label>
+                    <input id="client-detran-password" type="password" value={formData.portal_access?.detran?.password || ''}
+                      onChange={setPortal('detran', 'password')} autoComplete="new-password" />
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc' }}>
+                <strong style={{ display: 'block', marginBottom: 9, fontSize: 13 }}>Acesso GOV</strong>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="client-gov-login">Usuário / login</label>
+                    <input id="client-gov-login" type="text" value={formData.portal_access?.gov?.login || ''}
+                      onChange={setPortal('gov', 'login')} autoComplete="off" />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="client-gov-password">Senha</label>
+                    <input id="client-gov-password" type="password" value={formData.portal_access?.gov?.password || ''}
+                      onChange={setPortal('gov', 'password')} autoComplete="new-password" />
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc' }}>
+                <strong style={{ display: 'block', marginBottom: 9, fontSize: 13 }}>Outros acessos</strong>
+                <div className="form-group">
+                  <label htmlFor="client-other-access-label">Nome do acesso</label>
+                  <input id="client-other-access-label" type="text" value={formData.portal_access?.outros?.label || ''}
+                    onChange={setPortal('outros', 'label')} placeholder="Ex.: Portal municipal" maxLength={80} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="client-other-access-login">Usuário / login</label>
+                    <input id="client-other-access-login" type="text" value={formData.portal_access?.outros?.login || ''}
+                      onChange={setPortal('outros', 'login')} autoComplete="off" />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="client-other-access-password">Senha</label>
+                    <input id="client-other-access-password" type="password" value={formData.portal_access?.outros?.password || ''}
+                      onChange={setPortal('outros', 'password')} autoComplete="new-password" />
+                  </div>
+                </div>
+              </div>
 
               {/* Status */}
               <div className="form-group">

@@ -13,6 +13,7 @@ const express = require('express');
 const router = express.Router();
 
 const backoffice = require('../models/backofficeModels');
+const { canViewPortalSecrets, clientForViewer } = require('../models/clientRegistration');
 const { checkPermission } = require('../middlewares/checkPermission');
 const { handle, sendCsv } = require('./helpers/commercialRouteUtils');
 
@@ -61,7 +62,14 @@ router.get('/reports/:type', checkPermission('reports:read'), handle(scope, asyn
 router.get('/clients/:id/overview', checkPermission('clients:read'), handle(scope, async (req, res) => {
   const overview = await backoffice.clientOverview(req.tenantId, req.params.id);
   if (!overview) return res.status(404).json({ success: false, error: 'Cliente nao encontrado.' });
-  res.json({ success: true, data: { ...overview, tabs: backoffice.CLIENT_TABS } });
+  res.json({
+    success: true,
+    data: {
+      ...overview,
+      client: clientForViewer(overview.client, canViewPortalSecrets(req.userRole)),
+      tabs: backoffice.CLIENT_TABS,
+    },
+  });
 }));
 
 /** Uma aba por requisicao: a tela carrega sob demanda, sem puxar tudo (§34). */

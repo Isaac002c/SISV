@@ -20,6 +20,16 @@ import DocumentsManager from './DocumentsManager';
 import { fmtDate } from '../lib/format';
 import { getClientFields } from '../lib/clientsAPI';
 
+const CLIENT_CATEGORY_LABELS = {
+  standard: 'STANDARD', fidelidade: 'FIDELIDADE', empresarial: 'EMPRESARIAL',
+  parceiro: 'PARCEIRO', agencia: 'AGÊNCIA',
+};
+const CONTACT_LABELS = { whatsapp: 'WHATSAPP', telefone: 'TELEFONE', email: 'E-MAIL', sms: 'SMS' };
+const ORIGIN_LABELS = {
+  carteira: 'Carteira', indicacao: 'Indicação', balcao: 'Balcão',
+  midia_online: 'Mídia on-line', outros: 'Outros',
+};
+
 
 function Badge({ label, color }) {
   const c = color || '#64748b';
@@ -97,12 +107,27 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
 
       {tab === 'dados' && (
         <div>
+          <Row label="Código do cliente">{client.client_code || '—'}</Row>
           <Row label="Nome">{client.name}</Row>
+          <Row label="Tipo de cliente">{client.client_type?.toUpperCase() || '—'}</Row>
+          <Row label="Categoria do cliente">{CLIENT_CATEGORY_LABELS[client.category] || '—'}</Row>
           <Row label="CPF / CNPJ">{client.cpf || '—'}</Row>
+          <Row label="RG">{client.rg || '—'}</Row>
           <Row label="CNH">{client.cnh || '—'}</Row>
+          <Row label="Categoria da CNH">{client.cnh_category || '—'}</Row>
+          <Row label="Data da 1ª habilitação">{fmtDate(client.first_cnh)}</Row>
+          <Row label="Data de nascimento">{fmtDate(client.birth_date)}</Row>
           <Row label="Telefone">{client.phone || '—'}</Row>
+          <Row label="Nº WhatsApp">{client.whatsapp || '—'}</Row>
           <Row label="E-mail">{client.email || '—'}</Row>
+          <Row label="Contato preferencial">{CONTACT_LABELS[client.contact_preference] || '—'}</Row>
+          <Row label="Origem do cliente">{ORIGIN_LABELS[client.origin] || '—'}</Row>
+          {client.client_type === 'pj' && <Row label="Responsável (PJ)">{client.responsible_name || '—'}</Row>}
           <Row label="Endereço">{client.address || '—'}</Row>
+          <Row label="Dados adicionais">{client.additional_info || '—'}</Row>
+          <PortalAccessRow label="Acesso DETRAN" access={client.portal_access?.detran} />
+          <PortalAccessRow label="Acesso GOV" access={client.portal_access?.gov} />
+          <PortalAccessRow label="Outros acessos" access={client.portal_access?.outros} />
           {fieldDefinitions.filter((field) => field.storage_kind === 'custom').map((field) => (
             <Row key={field.id} label={field.label}>
               {String(client.additional_data?.[field.field_key] ?? '—')}
@@ -169,5 +194,30 @@ function Row({ label, children }) {
       <span style={{ color: '#94a3b8', fontSize: 13 }}>{label}</span>
       <span style={{ color: '#0f172a', fontSize: 13.5, fontWeight: 500, textAlign: 'right' }}>{children}</span>
     </div>
+  );
+}
+
+function PortalAccessRow({ label, access }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const hasPassword = Boolean(access?.password || access?.has_password);
+  const empty = !access?.login && !access?.label && !hasPassword;
+  return (
+    <Row label={label}>
+      {empty ? '—' : (
+        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}>
+          {access?.label && <span>{access.label} ·</span>}
+          {access?.login && <span>{access.login}</span>}
+          {access?.password ? (
+            <>
+              <span>· {showPassword ? access.password : '••••••••'}</span>
+              <button type="button" onClick={() => setShowPassword((value) => !value)}
+                style={{ border: 0, background: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0, fontSize: 12 }}>
+                {showPassword ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </>
+          ) : hasPassword ? <span>· senha cadastrada</span> : null}
+        </span>
+      )}
+    </Row>
   );
 }

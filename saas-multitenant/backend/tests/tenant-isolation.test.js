@@ -37,8 +37,15 @@ before(async () => {
       tenant_id TEXT NOT NULL, name TEXT, birth_date DATE, cpf TEXT, cnh TEXT,
       first_cnh DATE, phone TEXT, email TEXT, address TEXT, notes TEXT,
       status TEXT DEFAULT 'negociacao', lead_id TEXT, additional_data JSONB DEFAULT '{}'::jsonb,
+      client_code TEXT, client_type TEXT, category TEXT, rg TEXT, cnh_category TEXT,
+      whatsapp TEXT, contact_preference TEXT, origin TEXT, responsible_name TEXT,
+      additional_info TEXT, portal_access JSONB DEFAULT '{}'::jsonb,
       deleted_at TIMESTAMPTZ, deleted_by UUID, delete_reason TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE commercial_counters (
+      tenant_id TEXT NOT NULL, doc_type TEXT NOT NULL, current_number INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (tenant_id, doc_type)
     );
     CREATE TABLE fines (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -117,6 +124,26 @@ test('clientes: busca não vaza registros de outro tenant', async () => {
 test('clientes: contagem é isolada por tenant', async () => {
   assert.equal(Number(await clientModels.countClients(A)), 1);
   assert.equal(Number(await clientModels.countClients(B)), 1);
+});
+
+test('clientes: gera código por tenant e persiste os novos dados cadastrais', async () => {
+  assert.match(cliA.client_code, /^CLI-\d{4}-\d{5}$/);
+  assert.match(cliB.client_code, /^CLI-\d{4}-\d{5}$/);
+  assert.equal(cliA.client_code, cliB.client_code, 'a sequência é independente por tenant');
+
+  const updated = await clientModels.updateClient(cliA.id, {
+    name: cliA.name, birth_date: cliA.birth_date, cpf: cliA.cpf, cnh: cliA.cnh,
+    first_cnh: cliA.first_cnh, phone: cliA.phone, email: cliA.email,
+    address: cliA.address, notes: cliA.notes, status: cliA.status,
+    client_code: cliA.client_code,
+    client_type: 'pj', category: 'empresarial', rg: '12.345.678-9', cnh_category: 'AB',
+    whatsapp: '(21) 99999-0000', contact_preference: 'whatsapp', origin: 'indicacao',
+    responsible_name: 'Responsável da empresa', additional_info: 'Cliente prioritário',
+    portal_access: { detran: { login: 'cliente', password: 'segredo' } },
+  }, A);
+  assert.equal(updated.client_code, cliA.client_code);
+  assert.equal(updated.client_type, 'pj');
+  assert.equal(updated.portal_access.detran.login, 'cliente');
 });
 
 test('clientes: exclusão lógica preserva pedido vinculado e permite restauração', async () => {
