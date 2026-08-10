@@ -51,7 +51,7 @@ jobs:
       - name: Instalar dependências (limpo)
         run: npm ci
       - name: Lint (falha em erro; warnings são tolerados)
-        run: npx next lint --max-warnings=-1
+        run: npx next lint
       - name: Build de produção
         run: npm run build
         env:

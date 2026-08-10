@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node app.js",
     "dev": "node app.js",
-    "test": "node --test \"tests/**/*.test.js\"",
+    "test": "node scripts/run-unit-tests.js",
     "test:postgres": "node scripts/postgres-test-harness.js",
     "worker": "node workers/internalWorker.js",
     "worker:once": "node workers/internalWorker.js --once",
