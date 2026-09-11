@@ -108,11 +108,11 @@ test('migration 11 criou campos extensveis e sementes nativas por tenant', async
       WHERE tenant_id = $1 AND storage_kind = 'system'`,
     [tenantId]
   );
-  // 7 nativos da migration 11 + 10 acrescentados pela migration 12.
-  assert.equal(native.rowCount, 17);
+  // A migration 13 retira tipo PJ e responsavel do cadastro de novos tenants.
+  assert.equal(native.rowCount, 15);
 });
 
-test('migration 12 adicionou colunas, tipo select e sementes de cadastro', async () => {
+test('migrations 12 e 13 adicionaram o cadastro PF e a origem campanha', async () => {
   const { rows: columns } = await pool.query(
     `SELECT column_name FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'clients'
@@ -130,9 +130,10 @@ test('migration 12 adicionou colunas, tipo select e sementes de cadastro', async
   );
   const selectKeys = selects.rows.map((row) => row.field_key);
   assert.deepEqual([...selectKeys].sort(),
-    ['category','client_type','cnh_category','contact_preference','origin'].sort());
-  const clientType = selects.rows.find((row) => row.field_key === 'client_type');
-  assert.deepEqual(clientType.validation_rules.options, ['pf', 'pj']);
+    ['category','cnh_category','contact_preference','origin'].sort());
+  const origin = selects.rows.find((row) => row.field_key === 'origin');
+  assert.deepEqual(origin.validation_rules.options,
+    ['indicacao', 'balcao', 'midia_online', 'campanha', 'outros']);
 
   // O codigo do cliente e unico por tenant quando preenchido.
   await pool.query(

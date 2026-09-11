@@ -58,6 +58,7 @@ psql "$DATABASE_URL" -f migrations/sisv_09_user_soft_delete.sql                #
 psql "$DATABASE_URL" -f migrations/sisv_10_client_soft_delete.sql              # exclusao logica de cliente
 psql "$DATABASE_URL" -f migrations/sisv_11_client_fields_partners_contractors.sql # clientes/parceiros/contratante
 psql "$DATABASE_URL" -f migrations/sisv_12_client_registration_fields.sql          # cadastro ampliado de clientes
+psql "$DATABASE_URL" -f migrations/sisv_13_client_form_adjustments.sql             # ajustes operacionais do cadastro
 ```
 
 > A ordem importa: cada migration assume a anterior. Todas são idempotentes —
@@ -96,12 +97,19 @@ psql "$DATABASE_URL" -Atc "SELECT
   AND EXISTS (SELECT 1 FROM information_schema.columns
                WHERE table_name='clients' AND column_name='portal_access')
   AND EXISTS (SELECT 1 FROM client_field_definitions WHERE field_key='client_type')"
+
+# SISV 2.3: campanha e campos exclusivos de pessoa fisica (deve imprimir t)
+psql "$DATABASE_URL" -Atc "SELECT
+  EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clients_origin_check'
+           AND pg_get_constraintdef(oid) LIKE '%campanha%')
+  AND NOT EXISTS (SELECT 1 FROM client_field_definitions
+                   WHERE field_key IN ('client_type','responsible_name') AND active=TRUE)"
 ```
 
 Antes de apontar para produção, a cadeia inteira pode ser ensaiada num cluster
 PostgreSQL descartável, sem tocar em banco algum do ambiente:
 ```bash
-npm run test:postgres   # aplica 000→12, prova idempotência, rollback e reaplicação
+npm run test:postgres   # aplica 000→13, prova idempotência, rollback e reaplicação
 ```
 
 ## 5. Build
@@ -208,6 +216,7 @@ O rollback tem **três camadas** — reverter só o commit não basta.
 **1) Banco**
 ```bash
 # Opção A — desfazer as extensões recentes (ordem inversa, depois de voltar as aplicações)
+psql "$DATABASE_URL" -f migrations/sisv_13_client_form_adjustments_rollback.sql
 psql "$DATABASE_URL" -f migrations/sisv_12_client_registration_fields_rollback.sql
 psql "$DATABASE_URL" -f migrations/sisv_11_client_fields_partners_contractors_rollback.sql
 
@@ -269,7 +278,7 @@ npm ci && npm run lint && npm run build
 ```
 
 `test:postgres` sobe um PostgreSQL descartável em `backend/.postgres-test`,
-aplica `000→12`, prova idempotência, rollback e reaplicação. É o ensaio da
+aplica `000→13`, prova idempotência, rollback e reaplicação. É o ensaio da
 migration que vai rodar em produção.
 
 ## Passo 1 — Segredos da VPS
@@ -328,7 +337,8 @@ for m in 000_nexos_schema sisv_01_tenant_config sisv_02_documents \
          sisv_07_user_access_control sisv_08_username_login \
          sisv_09_user_soft_delete sisv_10_client_soft_delete \
          sisv_11_client_fields_partners_contractors \
-         sisv_12_client_registration_fields; do
+         sisv_12_client_registration_fields \
+         sisv_13_client_form_adjustments; do
   echo "→ $m"
   docker compose -f deploy/sisv-docker-compose.yml exec -T postgres \
     psql -v ON_ERROR_STOP=1 -U sisv -d sisv < backend/migrations/$m.sql || break
@@ -452,6 +462,7 @@ Roteiro completo em `HOMOLOGACAO.md`. Mínimo para considerar o deploy bom:
 | --- | --- |
 | Frontend quebrado | Vercel → deployment anterior → *Promote to Production* (instantâneo) |
 | Backend quebrado | `git checkout <tag-anterior>` e `up -d --build backend` |
+| Migration 13 problemática | voltar backend/frontend e executar `psql ... -f migrations/sisv_13_client_form_adjustments_rollback.sql` |
 | Migration 12 problemática | voltar backend/frontend e executar `psql ... -f migrations/sisv_12_client_registration_fields_rollback.sql` |
 | Migration 11 problemática | voltar backend/frontend e executar `psql ... -f migrations/sisv_11_client_fields_partners_contractors_rollback.sql` |
 | Migration 06 problemática | `psql ... -f migrations/sisv_06_commercial_backoffice_execution_rollback.sql` |

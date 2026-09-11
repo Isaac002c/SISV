@@ -76,6 +76,7 @@ function migrateAll() {
     'sisv_10_client_soft_delete.sql',
     'sisv_11_client_fields_partners_contractors.sql',
     'sisv_12_client_registration_fields.sql',
+    'sisv_13_client_form_adjustments.sql',
   ].forEach(migration);
 }
 
@@ -120,6 +121,7 @@ try {
   migration('sisv_10_client_soft_delete.sql');
   migration('sisv_11_client_fields_partners_contractors.sql');
   migration('sisv_12_client_registration_fields.sql');
+  migration('sisv_13_client_form_adjustments.sql');
 
   const databaseUrl = `postgresql://${user}@${host}:${port}/${db}?sslmode=disable`;
   const postgresTests = fs.readdirSync(path.join(backendDir, 'tests-postgres'))
@@ -137,7 +139,21 @@ try {
   });
   if (tests.status !== 0) throw new Error(`Testes PostgreSQL falharam (${tests.status}).`);
 
-  // Prova o rollback da rodada 12 primeiro (ordem inversa). As colunas novas
+  // Prova primeiro o rollback da rodada 13 (ordem inversa), sem perder a nova
+  // origem gravada em cadastros feitos durante sua vigencia.
+  migration('sisv_13_client_form_adjustments_rollback.sql');
+  const rollback13 = psql(db, [
+    '-Atc',
+    "SELECT EXISTS (SELECT 1 FROM client_field_definitions WHERE field_key='client_type' AND active=TRUE)"
+    + " AND EXISTS (SELECT 1 FROM client_field_definitions WHERE field_key='responsible_name' AND active=TRUE)"
+    + " AND EXISTS (SELECT 1 FROM client_field_definitions WHERE field_key='origin'"
+    + "   AND validation_rules->'options' ? 'carteira')",
+  ], { capture: true });
+  if (String(rollback13.stdout).trim() !== 't') {
+    throw new Error('Rollback 13 nao restaurou as definicoes da rodada 12.');
+  }
+
+  // Prova o rollback da rodada 12. As colunas novas
   // saem; a extensao 11 (additional_data, definicoes de campo) deve sobreviver.
   migration('sisv_12_client_registration_fields_rollback.sql');
   const rollback12 = psql(db, [
@@ -209,7 +225,11 @@ try {
     + " AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='client_code')"
     + " AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='portal_access')"
     + " AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='client_field_definitions_field_type_check'"
-    + "   AND pg_get_constraintdef(oid) LIKE '%select%')",
+    + "   AND pg_get_constraintdef(oid) LIKE '%select%')"
+    + " AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clients_origin_check'"
+    + "   AND pg_get_constraintdef(oid) LIKE '%campanha%')"
+    + " AND NOT EXISTS (SELECT 1 FROM client_field_definitions"
+    + "   WHERE field_key IN ('client_type','responsible_name') AND active=TRUE)",
   ], { capture: true });
   if (String(finalCheck.stdout).trim() !== 't') {
     throw new Error('Reaplicacao completa nao reconstruiu as estruturas da rodada.');

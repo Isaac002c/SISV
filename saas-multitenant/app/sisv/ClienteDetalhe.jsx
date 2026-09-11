@@ -26,9 +26,10 @@ const CLIENT_CATEGORY_LABELS = {
 };
 const CONTACT_LABELS = { whatsapp: 'WHATSAPP', telefone: 'TELEFONE', email: 'E-MAIL', sms: 'SMS' };
 const ORIGIN_LABELS = {
-  carteira: 'Carteira', indicacao: 'Indicação', balcao: 'Balcão',
-  midia_online: 'Mídia on-line', outros: 'Outros',
+  carteira: 'CARTEIRA', indicacao: 'INDICAÇÃO', balcao: 'BALCÃO',
+  midia_online: 'MÍDIA ON-LINE', campanha: 'CAMPANHA', outros: 'OUTROS',
 };
+const uppercase = (value) => String(value || '').toLocaleUpperCase('pt-BR');
 
 
 function Badge({ label, color }) {
@@ -90,7 +91,7 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
   const tabs = [['dados', 'Dados'], ['processos', `Processos (${processes.length})`], ['docs', `Documentos (${docs.length})`]];
 
   return (
-    <Drawer open title={client.name} subtitle={client.cpf ? `CPF ${client.cpf}` : (client.cnh ? `CNH ${client.cnh}` : '')}
+    <Drawer open title={uppercase(client.name)} subtitle={client.cpf ? `CPF ${client.cpf}` : (client.cnh ? `CNH ${uppercase(client.cnh)}` : '')}
       onClose={onClose}
       headerExtra={<button className="btn-secondary" style={{ padding: '5px 12px', fontSize: 12.5 }} onClick={() => onEdit(client)}>Editar</button>}>
 
@@ -107,30 +108,30 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
 
       {tab === 'dados' && (
         <div>
-          <Row label="Código do cliente">{client.client_code || '—'}</Row>
-          <Row label="Nome">{client.name}</Row>
-          <Row label="Tipo de cliente">{client.client_type?.toUpperCase() || '—'}</Row>
+          <Row label="Código do cliente">{client.client_code ? uppercase(client.client_code) : '—'}</Row>
+          <Row label="Nome">{uppercase(client.name)}</Row>
           <Row label="Categoria do cliente">{CLIENT_CATEGORY_LABELS[client.category] || '—'}</Row>
-          <Row label="CPF / CNPJ">{client.cpf || '—'}</Row>
-          <Row label="RG">{client.rg || '—'}</Row>
-          <Row label="CNH">{client.cnh || '—'}</Row>
+          <Row label="CPF">{client.cpf || '—'}</Row>
+          <Row label="RG">{client.rg ? uppercase(client.rg) : '—'}</Row>
+          <Row label="CNH">{client.cnh ? uppercase(client.cnh) : '—'}</Row>
           <Row label="Categoria da CNH">{client.cnh_category || '—'}</Row>
           <Row label="Data da 1ª habilitação">{fmtDate(client.first_cnh)}</Row>
           <Row label="Data de nascimento">{fmtDate(client.birth_date)}</Row>
           <Row label="Telefone">{client.phone || '—'}</Row>
           <Row label="Nº WhatsApp">{client.whatsapp || '—'}</Row>
-          <Row label="E-mail">{client.email || '—'}</Row>
+          <Row label="E-mail">{client.email ? uppercase(client.email) : '—'}</Row>
           <Row label="Contato preferencial">{CONTACT_LABELS[client.contact_preference] || '—'}</Row>
-          <Row label="Origem do cliente">{ORIGIN_LABELS[client.origin] || '—'}</Row>
-          {client.client_type === 'pj' && <Row label="Responsável (PJ)">{client.responsible_name || '—'}</Row>}
-          <Row label="Endereço">{client.address || '—'}</Row>
-          <Row label="Dados adicionais">{client.additional_info || '—'}</Row>
-          <PortalAccessRow label="Acesso DETRAN" access={client.portal_access?.detran} />
-          <PortalAccessRow label="Acesso GOV" access={client.portal_access?.gov} />
+          {client.category !== 'parceiro' && <Row label="Origem do cliente">{ORIGIN_LABELS[client.origin] || '—'}</Row>}
+          <Row label="Endereço">{client.address ? uppercase(client.address) : '—'}</Row>
+          <Row label="Dados adicionais">{client.additional_info ? uppercase(client.additional_info) : '—'}</Row>
+          <PortalAccessRow label="Acesso DETRAN" access={client.portal_access?.detran} hideLogin />
+          <PortalAccessRow label="Acesso GOV" access={client.portal_access?.gov} hideLogin />
           <PortalAccessRow label="Outros acessos" access={client.portal_access?.outros} />
           {fieldDefinitions.filter((field) => field.storage_kind === 'custom').map((field) => (
             <Row key={field.id} label={field.label}>
-              {String(client.additional_data?.[field.field_key] ?? '—')}
+              {field.field_type === 'email'
+                ? String(client.additional_data?.[field.field_key] ?? '—')
+                : uppercase(client.additional_data?.[field.field_key] ?? '—')}
             </Row>
           ))}
           <Row label="Situação dos processos">{processes.length === 0 ? 'Nenhum processo' : `${openCount} em aberto de ${processes.length}`}</Row>
@@ -138,7 +139,7 @@ export default function ClienteDetalhe({ client, config, onClose, onEdit }) {
           {client.notes && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: '#64748b', marginBottom: 5 }}>Observações</div>
-              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, color: '#334155', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>{client.notes}</div>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, color: '#334155', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>{uppercase(client.notes)}</div>
             </div>
           )}
         </div>
@@ -197,25 +198,25 @@ function Row({ label, children }) {
   );
 }
 
-function PortalAccessRow({ label, access }) {
+function PortalAccessRow({ label, access, hideLogin = false }) {
   const [showPassword, setShowPassword] = useState(false);
   const hasPassword = Boolean(access?.password || access?.has_password);
-  const empty = !access?.login && !access?.label && !hasPassword;
+  const empty = (!access?.login || hideLogin) && !access?.label && !hasPassword;
   return (
     <Row label={label}>
       {empty ? '—' : (
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}>
           {access?.label && <span>{access.label} ·</span>}
-          {access?.login && <span>{access.login}</span>}
+          {!hideLogin && access?.login && <span>{access.login}</span>}
           {access?.password ? (
             <>
-              <span>· {showPassword ? access.password : '••••••••'}</span>
+              <span>{(access?.label || (!hideLogin && access?.login)) ? '· ' : ''}{showPassword ? access.password : '••••••••'}</span>
               <button type="button" onClick={() => setShowPassword((value) => !value)}
                 style={{ border: 0, background: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0, fontSize: 12 }}>
                 {showPassword ? 'Ocultar' : 'Mostrar'}
               </button>
             </>
-          ) : hasPassword ? <span>· senha cadastrada</span> : null}
+          ) : hasPassword ? <span>{(access?.label || (!hideLogin && access?.login)) ? '· ' : ''}senha cadastrada</span> : null}
         </span>
       )}
     </Row>

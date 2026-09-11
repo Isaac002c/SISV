@@ -6,7 +6,7 @@ const fieldKey = `registro_${runId}`;
 const serviceCode = `CP${runId}`.slice(0, 20);
 const serviceName = `Servico contratante ${runId}`;
 const partnerName = `Parceiro contratante ${runId}`;
-const clientName = `Cliente atendido ${runId}`;
+const clientName = `CLIENTE ATENDIDO ${runId}`;
 
 async function login(page) {
   await page.goto('/login');
@@ -63,8 +63,11 @@ test('campo por servico, cliente atendido e parceiro contratante percorrem a int
   await goTo(page, 'clients');
   await page.getByRole('button', { name: 'Novo Cliente' }).click();
   const clientDialog = page.getByRole('dialog');
+  await clientDialog.locator('#client-category').selectOption('parceiro');
+  await expect(clientDialog.locator('#client-origin')).toHaveCount(0);
   await clientDialog.locator('#client-service-context').selectOption({ label: serviceName });
   await clientDialog.locator('#client-name').fill(clientName);
+  await clientDialog.locator('#client-cpf').fill(`7${runId.slice(-10)}`);
   await clientDialog.locator(`#client-extra-${fieldKey}`).fill('REG123456');
   await clientDialog.getByRole('button', { name: 'Criar cliente' }).click();
   await expect(page.getByText(clientName).first()).toBeVisible();

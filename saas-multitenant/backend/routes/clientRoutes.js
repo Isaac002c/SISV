@@ -3,10 +3,10 @@ const router = express.Router();
 const clientModel = require('../models/clientModels');
 const clientFields = require('../models/clientFieldModels');
 const {
-  normalizeRegistration, normalizePortalAccess, canViewPortalSecrets,
+  normalizeRegistration, validateClientRequirements, uppercaseOrNull,
+  normalizePortalAccess, canViewPortalSecrets,
   clientForViewer, clientForAudit,
 } = require('../models/clientRegistration');
-const { cleanOrNull } = require('../services/commercialCommon');
 const { checkPermission } = require('../middlewares/checkPermission');
 const activityLog = require('../services/activityLogService');
 
@@ -123,8 +123,9 @@ router.post('/', checkPermission('clients:create'), async (req, res) => {
   try {
     const { name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status } = req.body;
     const tenantId = req.tenantId;
+    const normalizedName = uppercaseOrNull(name, 255);
 
-    if (!name || !name.trim()) {
+    if (!normalizedName) {
       return res.status(400).json({ success: false, error: 'Nome é obrigatório' });
     }
 
@@ -148,14 +149,15 @@ router.post('/', checkPermission('clients:create'), async (req, res) => {
 
     const additionalData = await clientFields.normalizeAdditionalData(tenantId, req.body.additional_data);
     const registration = normalizeRegistration(req.body);
-    const portalAccess = normalizePortalAccess(req.body.portal_access) || {};
+    validateClientRequirements({ ...registration, cpf: cpfNormalized });
+    const portalAccess = normalizePortalAccess(req.body.portal_access, { cpf: cpfNormalized }) || {};
     const client = await clientModel.createClient({
       tenant_id: tenantId,
-      name: name.trim(), birth_date, cpf: cpfNormalized, cnh, first_cnh,
-      phone, email, address, notes,
+      name: normalizedName, birth_date, cpf: cpfNormalized, cnh: uppercaseOrNull(cnh, 20), first_cnh,
+      phone, email: uppercaseOrNull(email, 255), address: uppercaseOrNull(address), notes: uppercaseOrNull(notes),
       status: status || 'negociacao',
       additional_data: additionalData,
-      client_code: cleanOrNull(req.body.client_code, 40),
+      client_code: uppercaseOrNull(req.body.client_code, 40),
       ...registration,
       portal_access: portalAccess,
     });
@@ -178,8 +180,9 @@ router.put('/:id', checkPermission('clients:update'), async (req, res) => {
     const { id } = req.params;
     const { name, birth_date, cpf, cnh, first_cnh, phone, email, address, notes, status } = req.body;
     const tenantId = req.tenantId;
+    const normalizedName = uppercaseOrNull(name, 255);
 
-    if (!name || !name.trim()) {
+    if (!normalizedName) {
       return res.status(400).json({ success: false, error: 'Nome é obrigatório' });
     }
 
@@ -209,7 +212,7 @@ router.put('/:id', checkPermission('clients:update'), async (req, res) => {
     const additionalData = await clientFields.normalizeAdditionalData(tenantId, req.body.additional_data);
     const registrationChanges = normalizeRegistration(req.body, { partial: true });
     const registration = {
-      client_type: existingClient.client_type,
+      client_type: 'pf',
       category: existingClient.category,
       rg: existingClient.rg,
       cnh_category: existingClient.cnh_category,
@@ -220,15 +223,18 @@ router.put('/:id', checkPermission('clients:update'), async (req, res) => {
       additional_info: existingClient.additional_info,
       ...registrationChanges,
     };
-    if (registration.client_type !== 'pj') registration.responsible_name = null;
-    const portalAccess = normalizePortalAccess(req.body.portal_access);
+    registration.client_type = 'pf';
+    registration.responsible_name = null;
+    if (registration.category === 'parceiro') registration.origin = null;
+    validateClientRequirements({ ...registration, cpf: cpfNormalized });
+    const portalAccess = normalizePortalAccess(req.body.portal_access, { cpf: cpfNormalized });
     const client = await clientModel.updateClient(id, {
-      name: name.trim(), birth_date, cpf: cpfNormalized, cnh, first_cnh,
-      phone, email, address, notes,
+      name: normalizedName, birth_date, cpf: cpfNormalized, cnh: uppercaseOrNull(cnh, 20), first_cnh,
+      phone, email: uppercaseOrNull(email, 255), address: uppercaseOrNull(address), notes: uppercaseOrNull(notes),
       status: status || existingClient.status || 'negociacao',
       additional_data: additionalData,
       client_code: Object.prototype.hasOwnProperty.call(req.body, 'client_code')
-        ? cleanOrNull(req.body.client_code, 40) : existingClient.client_code,
+        ? uppercaseOrNull(req.body.client_code, 40) : existingClient.client_code,
       ...registration,
       portal_access: portalAccess,
     }, tenantId);

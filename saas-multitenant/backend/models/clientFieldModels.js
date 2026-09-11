@@ -297,7 +297,12 @@ async function normalizeAdditionalData(tenantId, input) {
     let value = raw;
     if (definition.field_type === 'boolean') value = bool(raw);
     else if (definition.field_type === 'number') value = Number(raw);
-    else value = clean(raw, Number(definition.validation_rules?.max_length) || 4000);
+    else {
+      value = clean(raw, Number(definition.validation_rules?.max_length) || 4000);
+      if (['text', 'textarea', 'document'].includes(definition.field_type)) {
+        value = value.toLocaleUpperCase('pt-BR');
+      }
+    }
     const error = validationMessage(value, definition);
     if (error) throw new BusinessError(`${definition.label}: ${error}.`);
     normalized[key] = value;

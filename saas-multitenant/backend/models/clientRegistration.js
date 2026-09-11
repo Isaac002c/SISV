@@ -15,11 +15,13 @@ const { clean, cleanOrNull, BusinessError } = require('../services/commercialCom
 // Conjuntos fechados (espelham as CHECKs da migration). A aplicacao normaliza
 // para minusculo, exceto a categoria da CNH, que segue a convencao maiuscula.
 const ENUMS = Object.freeze({
-  client_type: ['pf', 'pj'],
+  client_type: ['pf'],
   category: ['standard', 'fidelidade', 'empresarial', 'parceiro', 'agencia'],
   cnh_category: ['A', 'B', 'C', 'D', 'E', 'AB', 'AC', 'AD', 'AE', 'ACC'],
   contact_preference: ['whatsapp', 'telefone', 'email', 'sms'],
-  origin: ['carteira', 'indicacao', 'balcao', 'midia_online', 'outros'],
+  // `carteira` permanece aceito somente para compatibilidade com cadastros
+  // antigos; a interface oferece `campanha` em seu lugar.
+  origin: ['carteira', 'indicacao', 'balcao', 'midia_online', 'campanha', 'outros'],
 });
 
 const ENUM_LABELS = Object.freeze({
@@ -43,6 +45,11 @@ function normalizeEnum(field, value) {
   return candidate;
 }
 
+function uppercaseOrNull(value, maxLength = 4000) {
+  const normalized = cleanOrNull(value, maxLength);
+  return normalized ? normalized.toLocaleUpperCase('pt-BR') : null;
+}
+
 /**
  * Saneia os campos estruturados do cadastro. Sempre devolve o conjunto completo
  * (com null para vazios) para que create/update gravem de forma previsivel.
@@ -55,22 +62,29 @@ function normalizeRegistration(input = {}, { partial = false } = {}) {
     if (!partial || has(field)) normalized[field] = value;
   };
 
-  set('client_type', normalizeEnum('client_type', input.client_type));
+  set('client_type', 'pf');
   set('category', normalizeEnum('category', input.category));
-  set('rg', cleanOrNull(input.rg, 30));
+  set('rg', uppercaseOrNull(input.rg, 30));
   set('cnh_category', normalizeEnum('cnh_category', input.cnh_category));
   set('whatsapp', cleanOrNull(input.whatsapp, 30));
   set('contact_preference', normalizeEnum('contact_preference', input.contact_preference));
   set('origin', normalizeEnum('origin', input.origin));
-  set('responsible_name', cleanOrNull(input.responsible_name, 160));
-  set('additional_info', cleanOrNull(input.additional_info, 4000));
+  set('responsible_name', null);
+  set('additional_info', uppercaseOrNull(input.additional_info, 4000));
 
-  // O responsavel pertence exclusivamente a cadastros PJ. Ao trocar o tipo
-  // para PF, o valor anterior e removido para nao manter dado incoerente.
-  if ((!partial || has('client_type')) && normalized.client_type !== 'pj') {
-    normalized.responsible_name = null;
-  }
+  // Todos os servicos desta plataforma sao prestados a pessoa fisica.
+  if (!partial || has('client_type') || has('responsible_name')) normalized.responsible_name = null;
+  if ((!partial || has('category')) && normalized.category === 'parceiro') normalized.origin = null;
   return normalized;
+}
+
+function validateClientRequirements(input = {}) {
+  if (!input.category) throw new BusinessError('Categoria do cliente e obrigatoria.');
+  const cpf = clean(input.cpf, 20).replace(/\D/g, '');
+  if (cpf.length !== 11) throw new BusinessError('CPF e obrigatorio e deve ter 11 digitos.');
+  if (input.category !== 'parceiro' && !input.origin) {
+    throw new BusinessError('Origem do cliente e obrigatoria.');
+  }
 }
 
 /**
@@ -81,7 +95,7 @@ function normalizeRegistration(input = {}, { partial = false } = {}) {
  *   undefined -> campo ausente no payload (nao alterar no update)
  *   {}        -> limpar todos os acessos
  */
-function normalizePortalAccess(input) {
+function normalizePortalAccess(input, { cpf = '' } = {}) {
   if (input === undefined) return undefined;
   if (input === null || input === '') return {};
   if (typeof input !== 'object' || Array.isArray(input)) {
@@ -91,9 +105,12 @@ function normalizePortalAccess(input) {
   for (const slot of PORTAL_SLOTS) {
     const raw = input[slot];
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
-    const login = clean(raw.login, 160);
+    const login = slot === 'detran' || slot === 'gov'
+      ? clean(cpf, 20).replace(/\D/g, '')
+      : clean(raw.login, 160);
     const password = clean(raw.password, 200);
-    const label = slot === 'outros' ? clean(raw.label, 80) : '';
+    const label = slot === 'outros' ? uppercaseOrNull(raw.label, 80) || '' : '';
+    if ((slot === 'detran' || slot === 'gov') && !password) continue;
     if (!login && !password && !label) continue;
     const entry = { login, password };
     if (slot === 'outros') entry.label = label;
@@ -157,6 +174,8 @@ module.exports = {
   ENUMS,
   PORTAL_SLOTS,
   normalizeRegistration,
+  validateClientRequirements,
+  uppercaseOrNull,
   normalizePortalAccess,
   redactPortalAccess,
   canViewPortalSecrets,

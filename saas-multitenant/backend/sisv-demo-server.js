@@ -224,7 +224,6 @@ async function seed() {
 
   for (const [fieldKey, label, fieldType, systemColumn, sortOrder, rules = {}] of [
     ['client_code', 'Código do cliente', 'text', 'client_code', 5],
-    ['client_type', 'Tipo de cliente', 'select', 'client_type', 6, { options: ['pf', 'pj'] }],
     ['category', 'Categoria do cliente', 'select', 'category', 7,
       { options: ['standard', 'fidelidade', 'empresarial', 'parceiro', 'agencia'] }],
     ['cpf', 'CPF', 'document', 'cpf', 10],
@@ -241,8 +240,7 @@ async function seed() {
       { options: ['whatsapp', 'telefone', 'email', 'sms'] }],
     ['address', 'Endereço', 'textarea', 'address', 70],
     ['origin', 'Origem do cliente', 'select', 'origin', 75,
-      { options: ['carteira', 'indicacao', 'balcao', 'midia_online', 'outros'] }],
-    ['responsible_name', 'Responsável (PJ)', 'text', 'responsible_name', 80],
+      { options: ['indicacao', 'balcao', 'midia_online', 'campanha', 'outros'] }],
     ['additional_info', 'Dados adicionais', 'textarea', 'additional_info', 90],
   ]) {
     await pool.query(
