@@ -14,6 +14,7 @@ const {
   requireAdmin,
   requireAdminOrManager,
   getPermissionsByRole,
+  getAllRoles,
 } = require('../middlewares/checkPermission');
 
 // Executa um middleware com uma role e retorna { allowed, status }.
@@ -33,10 +34,20 @@ test('mapa de permissões: operator opera processos mas NÃO exclui', () => {
   assert.ok(!op.includes('users:create'), 'operator não cria usuários');
 });
 
-test('viewer é somente leitura', () => {
+test('viewer é somente leitura, exceto pelo cadastro inicial de cliente', () => {
   const v = getPermissionsByRole('viewer');
   assert.ok(v.includes('fines:read'));
+  assert.ok(v.includes('clients:create'));
   assert.ok(!v.includes('fines:update'), 'viewer não altera nada');
+});
+
+test('todo usuário autenticado pode cadastrar cliente, independentemente do módulo', async () => {
+  for (const role of getAllRoles()) {
+    assert.ok(getPermissionsByRole(role).includes('clients:create'),
+      `${role} recebe a permissão clients:create`);
+    const result = await run(checkPermission('clients:create'), role, { userModules: [] });
+    assert.equal(result.allowed, true, `${role} pode cadastrar cliente sem módulo explícito`);
+  }
 });
 
 test('matriz operacional: gestor administra operação; operacional não acessa governança', () => {

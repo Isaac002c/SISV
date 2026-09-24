@@ -118,7 +118,9 @@ const rolePermissions = {
     'sla:view', 'sla:pause', 'sla:resume'
   ],
   viewer: [
-    'clients:read',
+    // Todo usuario ativo pode iniciar um cadastro de cliente. As demais
+    // permissoes deste perfil continuam estritamente de leitura.
+    'clients:create', 'clients:read',
     'companies:read',
     'contracts:read',
     'documents:read',
@@ -151,7 +153,7 @@ const rolePermissions = {
   // Confere e decide: valida pedido, valida pagamento, confirma venda e abre a
   // ordem de serviço. NÃO administra catálogo, preços nem fornecedores.
   back_office: [
-    'clients:read', 'documents:create', 'documents:read', 'documents:update',
+    'clients:create', 'clients:read', 'documents:create', 'documents:read', 'documents:update',
     'fines:read', 'fines:update', 'tasks:create', 'tasks:read', 'tasks:update',
     'operations:read', 'reports:read',
     'suppliers:read', 'catalog:read', 'pricing:read',
@@ -168,7 +170,7 @@ const rolePermissions = {
   // Financeiro operacional: recebimentos, pagamentos, comissões e comprovantes.
   // NÃO confirma venda e NÃO executa ordem de serviço.
   finance: [
-    'clients:read', 'documents:read', 'fines:read', 'operations:read',
+    'clients:create', 'clients:read', 'documents:read', 'fines:read', 'operations:read',
     'reports:read', 'reports:export',
     'suppliers:read', 'suppliers:manage', 'catalog:read', 'pricing:read',
     'orders:read', 'backoffice:read',
@@ -185,7 +187,7 @@ const rolePermissions = {
   // Executa: ordens, processos, documentos, pendências e finalização.
   // NÃO valida pagamento, NÃO confirma venda e NÃO arquiva.
   operations: [
-    'clients:read', 'clients:update',
+    'clients:create', 'clients:read', 'clients:update',
     'documents:create', 'documents:read',
     'fines:create', 'fines:read', 'fines:update',
     'tasks:create', 'tasks:read', 'tasks:update',
@@ -236,7 +238,11 @@ const checkPermission = (permission) => {
       // module_access == NULL preserva usuarios legados. Quando o administrador
       // configura explicitamente os modulos, a permissao precisa pertencer a ao
       // menos um deles.
-      if (!hasModuleForPermission(req.userModules, permission)) {
+      // O cadastro inicial de cliente e transversal a operacao: um usuario
+      // ativo pode cria-lo mesmo quando seu perfil nao possui um modulo
+      // explicitamente selecionado. As demais acoes continuam respeitando
+      // integralmente o recorte por modulo.
+      if (permission !== 'clients:create' && !hasModuleForPermission(req.userModules, permission)) {
         return res.status(403).json({
           success: false,
           error: 'Este modulo nao esta habilitado para o seu perfil.',
